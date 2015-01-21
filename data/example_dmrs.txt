@@ -1,0 +1,74 @@
+<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010020'>
+<node nodeid='10002' cfrom='0' cto='2'><realpred lemma='in' pos='p' sense='state'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10003' cfrom='5' cto='75'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10004' cfrom='5' cto='19'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10005' cfrom='5' cto='19'><realpred lemma='mathematics' pos='n' sense='1'/><sortinfo cvarsort='x' pers='3' num='sg' gend='n' ind='minus'/></node>
+<node nodeid='10006' cfrom='22' cto='75'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10007' cfrom='22' cto='75'><gpred>implicit_conj_rel</gpred><sortinfo cvarsort='x' pers='3' num='pl'/></node>
+<node nodeid='10008' cfrom='22' cto='34'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10009' cfrom='22' cto='34'><realpred lemma='compute' pos='v' sense='1'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='plus' perf='minus'/></node>
+<node nodeid='10010' cfrom='22' cto='34'><gpred>nominalization_rel</gpred><sortinfo cvarsort='x' pers='3' num='sg' gend='n'/></node>
+<node nodeid='10011' cfrom='37' cto='75'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10012' cfrom='37' cto='75'><gpred>implicit_conj_rel</gpred><sortinfo cvarsort='x' pers='3' num='pl'/></node>
+<node nodeid='10013' cfrom='37' cto='48'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10014' cfrom='37' cto='48'><realpred lemma='linguistics' pos='n' sense='1'/><sortinfo cvarsort='x' pers='3' num='sg' gend='n' ind='minus'/></node>
+<node nodeid='10015' cfrom='51' cto='54'><realpred lemma='and' pos='c'/><sortinfo cvarsort='u' pers='3' num='pl'/></node>
+<node nodeid='10016' cfrom='55' cto='75'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10017' cfrom='55' cto='62'><realpred lemma='relate' pos='v' sense='to'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10019' cfrom='63' cto='75'><realpred lemma='discipline' pos='n' sense='1'/><sortinfo cvarsort='x' pers='3' num='pl'/></node>
+<node nodeid='10020' cfrom='76' cto='78'><realpred lemma='a' pos='q'/><sortinfo/></node>
+<node nodeid='10021' cfrom='82' cto='91'><realpred lemma='algorithm' pos='n' sense='1'/><sortinfo cvarsort='x' pers='3' num='sg' ind='plus'/></node>
+<node nodeid='10022' cfrom='95' cto='97'><realpred lemma='be' pos='v' sense='id'/><sortinfo cvarsort='e' sf='prop' tense='pres' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10023' cfrom='98' cto='99'><realpred lemma='a' pos='q'/><sortinfo/></node>
+<node nodeid='10024' cfrom='100' cto='108'><realpred lemma='sequence' pos='n' sense='of'/><sortinfo cvarsort='x' pers='3' num='sg' ind='plus'/></node>
+<node nodeid='10025' cfrom='112' cto='125'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10026' cfrom='112' cto='125'><realpred lemma='instruction' pos='n' sense='of'/><sortinfo cvarsort='x' pers='3' num='pl'/></node>
+<node nodeid='10027' cfrom='126' cto='131'><realpred lemma='often' pos='a' sense='1'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10028' cfrom='132' cto='136'><realpred lemma='use' pos='v' sense='1'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10030' cfrom='137' cto='140'><realpred lemma='for' pos='p'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative'/></node>
+<node nodeid='10031' cfrom='143' cto='181'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10032' cfrom='143' cto='154'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10033' cfrom='143' cto='154'><realpred lemma='calculation' pos='n' sense='of'/><sortinfo cvarsort='x' pers='3' num='sg'/></node>
+<node nodeid='10034' cfrom='157' cto='160'><realpred lemma='and' pos='c'/><sortinfo cvarsort='x' pers='3' num='pl'/></node>
+<node nodeid='10035' cfrom='163' cto='181'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10036' cfrom='163' cto='181'><gpred>compound_rel</gpred><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
+<node nodeid='10037' cfrom='163' cto='167'><gpred>udef_q_rel</gpred><sortinfo/></node>
+<node nodeid='10038' cfrom='163' cto='167'><realpred lemma='data' pos='n' sense='1'/><sortinfo cvarsort='x' pers='3' num='sg' ind='minus'/></node>
+<node nodeid='10039' cfrom='168' cto='181'><realpred lemma='process' pos='v' sense='1'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='plus' perf='minus'/></node>
+<node nodeid='10040' cfrom='168' cto='181'><gpred>nominalization_rel</gpred><sortinfo cvarsort='x' pers='3' num='sg' gend='n'/></node>
+<link from='10002' to='10022'><rargname>ARG1</rargname><post>EQ</post></link>
+<link from='10002' to='10007'><rargname>ARG2</rargname><post>NEQ</post></link>
+<link from='10003' to='10007'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10004' to='10005'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10006' to='10012'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10007' to='10005'><rargname>L-INDEX</rargname><post>NEQ</post></link>
+<link from='10007' to='10012'><rargname>R-INDEX</rargname><post>NEQ</post></link>
+<link from='10008' to='10010'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10010' to='10009'><rargname>ARG1</rargname><post>HEQ</post></link>
+<link from='10011' to='10015'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10012' to='10010'><rargname>L-INDEX</rargname><post>NEQ</post></link>
+<link from='10013' to='10014'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10015' to='10014'><rargname>L-INDEX</rargname><post>NEQ</post></link>
+<link from='10015' to='10019'><rargname>R-INDEX</rargname><post>NEQ</post></link>
+<link from='10016' to='10019'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10017' to='10019'><rargname>ARG2</rargname><post>EQ</post></link>
+<link from='10020' to='10021'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10022' to='10021'><rargname>ARG1</rargname><post>NEQ</post></link>
+<link from='10022' to='10024'><rargname>ARG2</rargname><post>NEQ</post></link>
+<link from='10023' to='10024'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10024' to='10026'><rargname>ARG1</rargname><post>NEQ</post></link>
+<link from='10025' to='10026'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10027' to='10028'><rargname>ARG1</rargname><post>EQ</post></link>
+<link from='10028' to='10024'><rargname>ARG2</rargname><post>EQ</post></link>
+<link from='10030' to='10028'><rargname>ARG1</rargname><post>EQ</post></link>
+<link from='10030' to='10034'><rargname>ARG2</rargname><post>NEQ</post></link>
+<link from='10031' to='10034'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10032' to='10033'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10034' to='10033'><rargname>L-INDEX</rargname><post>NEQ</post></link>
+<link from='10034' to='10040'><rargname>R-INDEX</rargname><post>NEQ</post></link>
+<link from='10035' to='10040'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10036' to='10040'><rargname>ARG1</rargname><post>EQ</post></link>
+<link from='10036' to='10038'><rargname>ARG2</rargname><post>NEQ</post></link>
+<link from='10037' to='10038'><rargname>RSTR</rargname><post>H</post></link>
+<link from='10040' to='10039'><rargname>ARG1</rargname><post>HEQ</post></link>
+</dmrs>
