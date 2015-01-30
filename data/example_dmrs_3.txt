@@ -1,4 +1,4 @@
-<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010050'>
+<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010050'> # A partial formalization of the concept began with attempts to solve the 'Entscheidungsproblem', the decision problem posed by David Hilbert in 1928
 <node nodeid='10001' cfrom='0' cto='1'><realpred lemma='a' pos='q'/><sortinfo/></node>
 <node nodeid='10002' cfrom='2' cto='9'><realpred lemma='partial' pos='a' sense='1'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative'/></node>
 <node nodeid='10003' cfrom='10' cto='23'><realpred lemma='formalization/nn' pos='u' sense='unknown'/><sortinfo cvarsort='x' pers='3' num='sg'/></node>
