@@ -1,4 +1,4 @@
-<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010030'>
+<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010030'> #It is formally a type of effective method in which a list of well-defined instructions for completing a task, when given an initial state, proceed through a well-defined series of successive states, eventually terminating in an end state.
 <node nodeid='10001' cfrom='0' cto='2'><gpred>pron_rel</gpred><sortinfo cvarsort='x' pers='3' num='sg' gend='n' prontype='std_pron'/></node>
 <node nodeid='10002' cfrom='0' cto='2'><gpred>pronoun_q_rel</gpred><sortinfo/></node>
 <node nodeid='10003' cfrom='3' cto='5'><realpred lemma='be' pos='v' sense='id'/><sortinfo cvarsort='e' sf='prop' tense='pres' mood='indicative' prog='minus' perf='minus'/></node>

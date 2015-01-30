@@ -1,4 +1,4 @@
-<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010020'>
+<dmrs cfrom='-1' cto='-1' surface='-1' ident='10010020'> #In mathematics, computing, linguistics and related disciplines, an algorithm is a sequence of instructions, often used for calculation and data processing
 <node nodeid='10002' cfrom='0' cto='2'><realpred lemma='in' pos='p' sense='state'/><sortinfo cvarsort='e' sf='prop' tense='untensed' mood='indicative' prog='minus' perf='minus'/></node>
 <node nodeid='10003' cfrom='5' cto='75'><gpred>udef_q_rel</gpred><sortinfo/></node>
 <node nodeid='10004' cfrom='5' cto='19'><gpred>udef_q_rel</gpred><sortinfo/></node>
