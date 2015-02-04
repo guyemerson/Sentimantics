@@ -117,18 +117,24 @@ SKIP = [] #'unknown_rel', 'fw_seq_rel'
 
 with open('../data/00101') as f:
     while True:
+        # Iterate over DMRSs
         graph = dict()
         ignore = list()
         while True:
+            # Iterate over nodes/links
             try:
                 line = next(f)
             except StopIteration:
                 break
+            # First, remember the sentence ID
             if line[0] != '<' or line[0:5] == '<dmrs':
                 ident = line[-16:-3]
                 continue
+            # Stop if we reach the end
             if line[0:7] == '</dmrs>':
                 break
+            
+            # For nodes/links:
             tags = line.split('><')
             first = tags[0].split()
             
@@ -156,6 +162,7 @@ with open('../data/00101') as f:
                 if rargname == 'NIL':
                     continue
                 
+                # Reverse arcs as necessary
                 if ((rargname[:3] == 'ARG' and post == 'EQ') # Make modifiers directional
                   #or post == 'HEQ' ## Do not reverse nominalization, perhaps we could later cut out the extra node
                   or label == 'RSTR_H'  # Reverse quantifiers
@@ -167,44 +174,64 @@ with open('../data/00101') as f:
                 graph[from_node].outgoing.add((label, graph[to_node]))
                 graph[to_node].incoming.add((label, graph[from_node]))
         
+        if not graph:
+            break  # When there is no DMRS left
+        
+        # Find roots and leaves of the graph
         root = list()
+        leaf = list()
+        for ID, node in graph.items():
+            if not node.incoming:
+                root.append((ID, node))
+            if not node.outgoing:
+                leaf.append((ID, node))
         
-        for idee, node in graph.items():
-            if node.incoming:
-                continue
-            root.append((idee, node))
+        # Quick check for cycles
+        if len(root) == 0:
+            print(ident, "cycle")
+            continue
+        # Thorough check for cycles
+        discard = set()
+        parents = set()
+        for _, node in leaf:
+            discard.add(node)
+            for _, mother in node.incoming:
+                parents.add(mother)
+        n = True
+        while n:
+            n = 0
+            new_parents = set()
+            for mother in parents:
+                if ({child for _, child in mother.outgoing} - discard):
+                    new_parents.add(mother)
+                else:
+                    n += 1
+                    discard.add(mother)
+                    for _, grand in mother.incoming:
+                        new_parents.add(grand)
+            parents = new_parents
+        if len(discard) != len(graph):
+            print(ident, "cycle")
+            continue
         
-        if len(root) > 1:
-            print(ident)
-            
+        if len(root) != 1:
             # Check if connected
-            cover = {idee:set() for idee, _ in root}
-            for idee, node in root:
-                queue = {x[1] for x in node.outgoing}
-                while queue:
-                    new = queue.pop()
-                    cover[idee].add(new)
-                    for _, child in new.outgoing:
-                        if not (child in queue or child in cover[idee]):
-                            queue.add(child)
-            intersect = False
-            for n, first in enumerate(root[:-1]):
-                for second in root[n:]:
-                    if cover[first[0]] & cover[second[0]]:
-                        intersect = True
-                        break
-                if intersect: break
-            if intersect:
-                #print("Disconnected")
+            cover = set()
+            queue = {child for _, child in root[0][1].outgoing}  # Set of nodes immediately dominated by the first root
+            while queue:
+                new = queue.pop()
+                cover.add(new)
+                for _, child in new.outgoing | new.incoming:
+                    if not (child in queue or child in cover):
+                        queue.add(child)
+            if not len(cover) == len(graph):
+                print(ident, "disconnected")
                 continue
             
-            for idee, node in root:
-                print(idee, node.lemma, end=': ')
+            print(ident)
+            for ID, node in root:
+                print(' ', ID, node.lemma, end=': ')
                 for label, new_node in node.outgoing:
                     print(label, new_node.lemma, end=', ')
                 print()
-            print()
             #input()
-        
-        if not graph:
-            break
