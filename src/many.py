@@ -187,9 +187,9 @@ with open('../data/00101') as f:
                 leaf.append((ID, node))
         
         # Quick check for cycles
-        if len(root) == 0:
-            print(ident, "cycle")
-            continue
+        #if len(root) == 0:
+        #    print(ident, "cycle")
+        #    continue
         # Thorough check for cycles
         discard = set()
         parents = set()
@@ -210,8 +210,8 @@ with open('../data/00101') as f:
                     for _, grand in mother.incoming:
                         new_parents.add(grand)
             parents = new_parents
-        if len(discard) != len(graph):
-            print(ident, "cycle")
+        if parents:
+            print(ident, "cycle", parents, set(graph.values()) - discard)
             continue
         
         if len(root) != 1:
@@ -233,5 +233,6 @@ with open('../data/00101') as f:
                 print(' ', ID, node.lemma, end=': ')
                 for label, new_node in node.outgoing:
                     print(label, new_node.lemma, end=', ')
+                    pass
                 print()
             #input()
