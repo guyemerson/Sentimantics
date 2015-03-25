@@ -115,7 +115,7 @@ NO = ['addressee_rel',
 
 SKIP = [] #'unknown_rel', 'fw_seq_rel'
 
-with open('../data/00101') as f:
+with open('../data/00101', encoding='utf8') as f:
     while True:
         # Iterate over DMRSs
         graph = dict()
