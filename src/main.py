@@ -38,11 +38,11 @@ with open('../data/example_dmrs_3.txt','r') as f:
             graph[to_node].incoming.add((label, graph[from_node]))
             
 
-for id, node in graph.items():
+for iden, node in graph.items():
     if node.incoming:
         continue
-    print(id, node.lemma, end=': ')
+    print(iden, node.lemma, end=': ')
     for label, new_node in node.outgoing:
         print(label, new_node.lemma, end=', ')
     print()
-    #print(id, node.incoming, node.outgoing)
+    #print(iden, node.incoming, node.outgoing)
