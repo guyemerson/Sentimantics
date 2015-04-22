@@ -1,4 +1,4 @@
-from theano import tensor as T, shared, function
+from theano import tensor as T, shared, function, scan, compile as theano_compile
 tdot = T.tensordot
 from numpy import zeros, longfloat, array, zeros_like
 from numpy.random import randn
@@ -38,6 +38,9 @@ for p,i in phraseid.items():
         embeddingid[i] = vocab
         vocab += 1
 
+def getembid(token):
+    return embeddingid[token]
+
 
 # Set up weights and embeddings
 
@@ -74,13 +77,13 @@ normalise()
 
 print("Setting up Theano functions...")
 
-# Functions to update weights, using AdaGrad and momentum
-# (Add in regularisation...)
+# Functions to update weights, using AdaGrad and momentum, and L1 regularisation
 
 # Hyperparameters
 rate = shared(1., name='rate')
 adaDecay = shared(0.9, name='adaDecay')
 momDecay = shared(0.5, name='momDecay')
+reg = shared(array([0.1,0.1,0.1,0.1,0.1,0.1]), name='reg')
 
 dwq = T.dtensor3()
 dwl = T.dmatrix()
@@ -99,12 +102,12 @@ update_sum = function([dwq,dwl,db,de,dws,dbs],updates=
                   allow_input_downcast=True) #Is downcast needed here?
 
 update_step = function([dwq,dwl,db,de,dws,dbs],updates=
-                  ((wQuadDel, momDecay*wQuadDel + (T.abs_(dwq)>0)*rate*T.sqrt(wQuadSq)*dwq),
-                   (wLinDel,  momDecay*wLinDel  + (T.abs_(dwl)>0)*rate*T.sqrt(wLinSq) *dwl),
-                   (biasDel,  momDecay*biasDel  + (T.abs_(db) >0)*rate*T.sqrt(biasSq) *db),
-                   (embedDel, momDecay*embedDel + (T.abs_(de) >0)*rate*T.sqrt(embedSq)*de),
-                   (wSentDel, momDecay*wSentDel + (T.abs_(dws)>0)*rate*T.sqrt(wSentSq)*dws),
-                   (bSentDel, momDecay*bSentDel + (T.abs_(dbs)>0)*rate*T.sqrt(bSentSq)*dbs)),
+                  ((wQuadDel, momDecay*wQuadDel + T.switch(T.gt(T.abs_(wQuadSq),0),rate/T.sqrt(wQuadSq)*dwq,T.zeros_like(wQuadSq))),
+                   (wLinDel,  momDecay*wLinDel  + T.switch(T.gt(T.abs_(wLinSq) ,0),rate/T.sqrt(wLinSq) *dwl,T.zeros_like(wLinSq))),
+                   (biasDel,  momDecay*biasDel  + T.switch(T.gt(T.abs_(biasSq) ,0),rate/T.sqrt(biasSq) *db, T.zeros_like(biasSq))),
+                   (embedDel, momDecay*embedDel + T.switch(T.gt(T.abs_(embedSq),0),rate/T.sqrt(embedSq)*de, T.zeros_like(embedSq))),
+                   (wSentDel, momDecay*wSentDel + T.switch(T.gt(T.abs_(wSentSq),0),rate/T.sqrt(wSentSq)*dws,T.zeros_like(wSentSq))),
+                   (bSentDel, momDecay*bSentDel + T.switch(T.gt(T.abs_(bSentSq),0),rate/T.sqrt(bSentSq)*dbs,T.zeros_like(bSentSq)))),
                   allow_input_downcast=True) #Is downcast needed here?
 
 update_weights = function([],updates=
@@ -116,68 +119,146 @@ update_weights = function([],updates=
                    (bSent, bSent - bSentDel)),
                   allow_input_downcast=True) #Not quite sure why downcast needed here
 
-def update(dwq,dwl,db,de,dws,dbs):
-    update_sum(dwq,dwl,db,de,dws,dbs)
-    update_step(dwq,dwl,db,de,dws,dbs)
+regularise = function([],updates=
+                      ((wQuad, T.switch(T.lt(T.abs_(wQuad),reg[0]),T.zeros_like(wQuad),wQuad - reg[0]*T.sgn(wQuad))),
+                       (wLin,  T.switch(T.lt(T.abs_(wLin), reg[1]),T.zeros_like(wLin), wLin  - reg[1]*T.sgn(wLin))),
+                       (bias,  T.switch(T.lt(T.abs_(bias), reg[2]),T.zeros_like(bias), bias  - reg[2]*T.sgn(bias))),
+                       (embed, T.switch(T.lt(T.abs_(embed),reg[3]),T.zeros_like(embed),embed - reg[3]*T.sgn(embed))),
+                       (wSent, T.switch(T.lt(T.abs_(wSent),reg[4]),T.zeros_like(wSent),wSent - reg[4]*T.sgn(wSent))),
+                       (bSent, T.switch(T.lt(T.abs_(bSent),reg[5]),T.zeros_like(bSent),bSent - reg[5]*T.sgn(bSent)))),
+                      allow_input_downcast=True)
+
+def update(Dwq,Dwl,Db,De,Dws,Dbs):
+    update_sum(Dwq,Dwl,Db,De,Dws,Dbs)
+    update_step(Dwq,Dwl,Db,De,Dws,Dbs)
     update_weights()
+    regularise()
+
+def update_nobias(Dwq,Dwl,Db,De,Dws,Dbs):
+    update_sum(Dwq,Dwl,zeros_like(Db),De,Dws,zeros_like(Dbs))
+    update_step(Dwq,Dwl,zeros_like(Db),De,Dws,zeros_like(Dbs))
+    update_weights()
+    regularise()
+
 
 # Functions to calculate the RNN operations
 
-left  = T.dvector('left')
-right = T.dvector('right')
-cat = T.concatenate([left,right])
-linear = tdot(tdot(wQuad,left,((2),(0))),right,((1),(0))) + tdot(wLin,cat,((1),(0))) + bias
-output = linear * (linear >= 0)
-combine = function([left,right], output)
+def merge(left, right, cur, prev):
+    """
+    Given: a set of embeddings (prev),
+     the index of next node (cur),
+     and the indices of the child nodes (left, right),
+    calculate the embedding for the next node,
+    and output the set of embeddings with this one updated (new),
+    along with the index for the next node (cur+1).
+    """
+    first = prev[left]
+    second= prev[right]
+    cat = T.concatenate((first,second))
+    out = tdot(tdot(wQuad,first,((2),(0))),second,((1),(0))) + tdot(wLin,cat,((1),(0))) + bias
+    rect = out * (out >= 0)
+    new = T.set_subtensor(prev[cur], rect, inplace=False)
+    return [cur+1, new]
 
-vec = T.dvector('vec')
-gold = T.dscalar('gold')
-pred = T.nnet.sigmoid( tdot(wSent,vec,((0),(0))) + bSent )
-sqdiff = (pred-gold)**2
-predict = function([vec],pred)
+def cost(vector, gold):
+    """
+    Given an output vector, and the gold standard annotation,
+    calculate the square loss of predicting the gold from the vector
+    """
+    pred = T.nnet.sigmoid(tdot(vector,wSent,(0,0)) + bSent)
+    return (pred-gold)**2
 
-gEmb, gwSent, gbSent = T.grad(sqdiff, [vec,wSent,bSent])
-diffPredict = function([vec,gold], [gEmb, gwSent, gbSent])
 
+sentembed = T.dmatrix('sentembed')
+leftindices = T.bvector('leftindices')
+rightindices= T.bvector('rightindices')
+senti = T.dvector('senti')
+n,m = T.shape(sentembed)
+padded = T.concatenate((sentembed,T.zeros((n-1,m),'float64')))
 
+output, up1 = scan(merge,
+                   sequences=[leftindices,
+                              rightindices],
+                   outputs_info=[n,
+                                 padded])
+vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
+loss, up2 = scan(cost,
+                 sequences=[vec,
+                            senti],
+                 outputs_info=None)
+total = T.sum(loss)
+gwq,gwl,gb,sge,gws,gbs = T.grad(total, [wQuad,wLin,bias,sentembed,wSent,bSent])
+find_grad = function([sentembed,leftindices,rightindices,senti],[gwq,gwl,gb,sge,gws,gbs],allow_input_downcast=True)
+
+"""
 # Testing...
 print('On to the test...')
+# make things simple for now...
+find_output = function([sentembed,leftindices,rightindices,senti],[vec,loss],allow_input_downcast=True)
 
-wSent.set_value(array([1])) # make things simple for now...
-for _ in range(100):
-    vectors = embed.get_value()
-    gradEmb = zeros((vocab,dim))
-    gradWeiSent = zeros(dim)
-    gradBiaSent = longfloat()
-    for pid, eid in embeddingid.items():
-        ge, gws, gbs = diffPredict(vectors[eid],sentiment[pid])
-        gradEmb[eid] += ge
-        #gradWeiSent += gws
-        #gradBiaSent += gbs #leave out the bias...
-    update(zeros((dim,dim,dim)),zeros((dim,2*dim)),zeros(dim),gradEmb,gradWeiSent,gradBiaSent)
-    for x in ['thoughtful','entertaining','awful','dreadful']:
-        print(x, predict(vectors[embeddingid[phraseid[x]]]))
+wQuad.set_value(array([[[1.]]]))
+wLin.set_value(array([[1.,1.]]))
+bias.set_value(array([0.]))
+embed.set_value(array([[1.],[0],[0.5]]))
+wSent.set_value(array([1.]))
+bSent.set_value(0.)
 
+test_embedding = embed.get_value()
+test_left = array([1,0])
+test_right = array([2,3])
+test_signal = array([0.,0,1,1,1])
+
+stuff = find_grad(test_embedding, test_left, test_right, test_signal)
+other = find_output(test_embedding, test_left, test_right, test_signal)
+for x in stuff:
+    print(x)
+for x in other:
+    print(x)
+update_nobias(*stuff)
+for x in (wQuad,wLin,bias,embed,wSent,bSent):
+    print(x.get_value())
+"""
 
 # Load sentences
+
+print('Loading sentences')
+
+embeddings = embed.get_value()
 
 with open(bankDir+'SOStr.txt','r') as ftext, \
      open(bankDir+'STree.txt','r') as ftree:
     for line in ftext:
+        # Find: tokens, phrase ids, embedding ids, child nodes
         tokens = line.rstrip().split('|')
+        N = len(tokens)
         ids = list(map(getid, tokens))
-        tree = [int(x) for x in next(ftree).rstrip().split('|')]
+        embids = list(map(getembid, ids))
+        tree = [int(x)-1 for x in next(ftree).rstrip().split('|')] # -1 for 0-indexing
         reverse = tree[::-1]
-        children = {x:(tree.index(x)+1, len(tree)-reverse.index(x)) for x in range(len(tokens)+1,2*len(tokens))}
-        for i in range(len(ids)+1,len(tree)+1):
+        leftchildren = []
+        rightchildren = []
+        for x in range(N,2*N-1):
+            leftchildren.append(tree.index(x))
+            rightchildren.append(2*N-2-reverse.index(x))
+        # Construct constituent phrases to find their ids
+        for i in range(N,2*N-1):
             nonterm = [i]
             terminals = []
             while nonterm:
-                left, right = children[nonterm.pop()]
-                if left < len(tokens)+1 : terminals.append(left)
+                chosen = nonterm.pop() - N
+                left = leftchildren[chosen]
+                right = rightchildren[chosen]
+                if left < N : terminals.append(left)
                 else: nonterm.append(left)
-                if right < len(tokens)+1: terminals.append(right)
+                if right < N: terminals.append(right)
                 else: nonterm.append(right)
-            text = ' '.join(tokens[min(terminals)-1:max(terminals)])
+            text = ' '.join(tokens[min(terminals):max(terminals)+1])
             ids.append(phraseid[text])
-        scores = list(map(getsent,ids))
+        # Find sentiment for all nodes
+        scores = array(map(getsent,ids))
+        # Prepare arrays
+        leftchildren = array(leftchildren)
+        rightchildren = array(rightchildren)
+        sentembed = embeddings[embids]
+
+# Now we just need to take batches and do the descent...
