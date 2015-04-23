@@ -1,7 +1,9 @@
-from theano import tensor as T, shared, function, scan, compile as theano_compile
+from theano import tensor as T, shared, function, scan #, compile as theano_compile
 tdot = T.tensordot
-from numpy import zeros, longfloat, array, zeros_like
-from numpy.random import randn
+from numpy import longfloat, array, zeros_like, zeros
+from numpy.random import randn, shuffle
+#from scipy.sparse import csr_matrix
+import pickle
 
 bankDir = '../data/stanfordSentimentTreebank/'
 
@@ -46,14 +48,14 @@ def getembid(token):
 
 print("Initialising weights...")
 
-dim = 1 #30
+dim = 30
 
 norm = 1/dim
 
 wQuad = shared(norm*randn(dim,dim,dim), name='wQuad')
 wLin  = shared(norm*randn(dim,2*dim), name='wLin')
-bias  = shared(norm*randn(dim), name='bias')
-embed = shared(randn(vocab,dim), name='embed')
+bias  = shared(zeros(dim), name='bias')
+embed = shared(norm*randn(vocab,dim), name='embed')
 wSent = shared(norm*randn(dim), name='wSent')
 bSent = shared(0., name='bSent')
 
@@ -71,8 +73,8 @@ embedDel = shared(zeros_like(embed.get_value()), name='embedDel')
 wSentDel = shared(zeros_like(wSent.get_value()), name='wSentDel')
 bSentDel = shared(zeros_like(bSent.get_value()), name='bSentDel')
 
-normalise = function([], updates={embed: embed / T.sqrt((embed**2).sum(1).dimshuffle(0,'x'))})
-normalise()
+#normalise = function([], updates={embed: embed / T.sqrt((embed**2).sum(1).dimshuffle(0,'x'))})
+#normalise()
 
 
 print("Setting up Theano functions...")
@@ -223,7 +225,10 @@ for x in (wQuad,wLin,bias,embed,wSent,bSent):
 
 print('Loading sentences')
 
-embeddings = embed.get_value()
+data_scores = []
+data_left = []
+data_right = []
+data_embids = []    
 
 with open(bankDir+'SOStr.txt','r') as ftext, \
      open(bankDir+'STree.txt','r') as ftree:
@@ -232,7 +237,7 @@ with open(bankDir+'SOStr.txt','r') as ftext, \
         tokens = line.rstrip().split('|')
         N = len(tokens)
         ids = list(map(getid, tokens))
-        embids = list(map(getembid, ids))
+        embids = tuple(map(getembid, ids))
         tree = [int(x)-1 for x in next(ftree).rstrip().split('|')] # -1 for 0-indexing
         reverse = tree[::-1]
         leftchildren = []
@@ -253,12 +258,46 @@ with open(bankDir+'SOStr.txt','r') as ftext, \
                 if right < N: terminals.append(right)
                 else: nonterm.append(right)
             text = ' '.join(tokens[min(terminals):max(terminals)+1])
-            ids.append(phraseid[text])
-        # Find sentiment for all nodes
-        scores = array(map(getsent,ids))
-        # Prepare arrays
-        leftchildren = array(leftchildren)
-        rightchildren = array(rightchildren)
-        sentembed = embeddings[embids]
+            ids.append(getid(text))
+        # Record all data
+        data_scores.append(array(list(map(getsent,ids))))
+        data_left.append(array(leftchildren))
+        data_right.append(array(rightchildren))
+        data_embids.append(embids)
 
 # Now we just need to take batches and do the descent...
+# Also take the train-dev-test split, and see how performance changes...
+
+#N_folds = 
+
+datapoints = list(range(len(data_scores)))  # 11855
+#shuffle(datapoints)
+
+def descend():
+    embeddings = embed.get_value()
+    
+    total_grad = [zeros_like(wQuad.get_value()),
+                  zeros_like(wLin.get_value()),
+                  zeros_like(bias.get_value()),
+                  zeros_like(embed.get_value()),
+                  zeros_like(wSent.get_value()),
+                  zeros_like(bSent.get_value())]
+    
+    for i in datapoints:
+        scores = data_scores[i]
+        left = data_left[i]
+        right = data_right[i]
+        sentembed = array([embeddings[j] for j in data_embids[i]])
+        grad = find_grad(sentembed, left, right, scores)
+        for x in (0,1,2,4,5):
+            total_grad[x] += grad[x]
+        for n, j in enumerate(data_embids[i]):
+            total_grad[3][j] += grad[3][n]
+    
+    update_nobias(*total_grad)
+
+if __name__ == '__main__':
+    filename = '../data/model/first.pk'
+    for i in range(1000):
+        descend()
+        
