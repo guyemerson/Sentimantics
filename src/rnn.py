@@ -1,6 +1,6 @@
 from theano import tensor as T, shared, function, scan #, compile as theano_compile
 tdot = T.tensordot
-from numpy import longfloat, array, zeros_like
+from numpy import float64, array, zeros_like
 
 bankDir = '../data/stanfordSentimentTreebank/'
 
@@ -15,18 +15,17 @@ vocab = 0
 with open(bankDir+'dictionary.txt','r') as f:
     for line in f:
         key, value = line.rstrip().split('|')
-        phraseid[key] = int(value)
+        pid = int(value)
+        phraseid[key] = pid
+        if not ' ' in key:
+            embeddingid[pid] = vocab
+            vocab += 1
 
 with open(bankDir+'sentiment_labels.txt','r') as f:
     f.readline()
     for line in f:
         key, value = line.rstrip().split('|')
-        sentiment[int(key)] = longfloat(value)
-
-for p,i in phraseid.items():
-    if not ' ' in p:
-        embeddingid[i] = vocab
-        vocab += 1
+        sentiment[int(key)] = float64(value)
 
 def getid(phrase):
     return phraseid[phrase]
@@ -72,12 +71,12 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
     update_step= function(gradient, updates=
                           tuple((stepSize[i],
                                  momDecay*stepSize[i] + T.switch(T.eq(squareSum[i],0),
-                                                                 rate/T.sqrt(squareSum[i])*gradient[i],
-                                                                 zero[i]))
+                                                                 zero[i],
+                                                                 rate/T.sqrt(squareSum[i])*gradient[i]))
                                 for i in range(N)),
                           allow_input_downcast=True)
     
-    update_wei = function(gradient, updates=
+    update_wei = function([], updates=
                           tuple((parameters[i],
                                  parameters[i] - stepSize[i])
                                 for i in range(N)),
@@ -97,7 +96,7 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
         update_wei()
         regularise()
     
-    return update
+    return update #, squareSum, stepSize
 
 
 # Function to calculate the gradient
@@ -164,14 +163,19 @@ def gradient_function(wQuad, wLin, wSent):
 
 def get_data():
     """
-    Returns a list of datapoints in the form:
+    Returns three lists of datapoints in the form:
     [embedding ids, left children, right children, sentiment scores]
+    The lists are: train, test, dev
     """
     
-    data = []
+    train = []
+    test = []
+    dev = []
     
     with open(bankDir+'SOStr.txt','r') as ftext, \
-         open(bankDir+'STree.txt','r') as ftree:
+         open(bankDir+'STree.txt','r') as ftree, \
+         open(bankDir+'datasetSplit.txt','r') as fsplit:
+        fsplit.readline()
         for line in ftext:
             # Find: tokens, phrase ids, embedding ids, child nodes
             tokens = line.rstrip().split('|')
@@ -199,10 +203,17 @@ def get_data():
                     else: nonterm.append(right)
                 text = ' '.join(tokens[min(terminals):max(terminals)+1])
                 ids.append(getid(text))
-            # Record all data
-            data.append([array(list(map(getsent,ids))),
+            # Record data
+            datapoint = [embids,
                          array(leftchildren),
                          array(rightchildren),
-                         embids])
+                         array(list(map(getsent,ids)))]
+            section = fsplit.readline().strip().split(',')[-1]
+            if section == '1':
+                train.append(datapoint)
+            elif section == '2':
+                test.append(datapoint)
+            else:
+                dev.append(datapoint)
     
-    return data
+    return [train, test, dev]
