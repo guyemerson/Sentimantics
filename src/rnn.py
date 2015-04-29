@@ -1,4 +1,4 @@
-from theano import tensor as T, shared, function, scan #, compile as theano_compile
+from theano import tensor as T, shared, function, scan #, sparse as S #, compile as theano_compile
 tdot = T.tensordot
 from numpy import float64, array, zeros_like
 
@@ -52,7 +52,8 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
     N = len(parameters)
     assert len(regularisation) == N
     
-    gradient = [T.TensorVariable(p.type, name=p.name+'Grad') for p in parameters]
+    gradient = [T.TensorVariable(p.type, name=p.name+'Grad') for p in parameters] #[:3]]
+    #gradient.append(S.csr_matrix(parameters[3].name+'Grad', 'float64'))
     zero = [T.zeros_like(p) for p in parameters]
     squareSum = [shared(zeros_like(p.get_value()), name=p.name+'SqSum') for p in parameters]
     stepSize  = [shared(zeros_like(p.get_value()), name=p.name+'Step')  for p in parameters]
@@ -63,31 +64,35 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
     reg = shared(array(regularisation), name='reg')
     
     update_sum = function(gradient, updates=
-                          tuple((squareSum[i],
-                                 adaDecay*squareSum[i] + gradient[i]**2)
-                                for i in range(N)),
+                          list((squareSum[i],
+                                adaDecay*squareSum[i] + gradient[i]**2)
+                               for i in range(N)), #-1))
+                          #  + [(squareSum[3],
+                          #      adaDecay*squareSum[3] + S.sqr(gradient[3]))],
                           allow_input_downcast=True)
     
     update_step= function(gradient, updates=
-                          tuple((stepSize[i],
-                                 momDecay*stepSize[i] + T.switch(T.eq(squareSum[i],0),
-                                                                 zero[i],
-                                                                 rate/T.sqrt(squareSum[i])*gradient[i]))
-                                for i in range(N)),
+                          list((stepSize[i],
+                                momDecay*stepSize[i] + T.switch(T.eq(squareSum[i],0),
+                                                                zero[i],
+                                                                rate/T.sqrt(squareSum[i])*gradient[i]))
+                               for i in range(N)), #-1))
+                          #  + [(stepSize[3],
+                          #      momDecay*stepSize[3] + S.mul(gradient[3], rate/T.sqrt(squareSum[3])))],
                           allow_input_downcast=True)
     
     update_wei = function([], updates=
-                          tuple((parameters[i],
-                                 parameters[i] - stepSize[i])
-                                for i in range(N)),
+                          list((parameters[i],
+                                parameters[i] - stepSize[i])
+                               for i in range(N)),
                           allow_input_downcast=True)
     
     regularise = function([], updates=
-                          tuple((parameters[i],
-                                 T.switch(T.lt(abs(parameters[i]),reg[i]),
-                                          zero[i],
-                                          parameters[i] - reg[i]*T.sgn(parameters[i])))
-                                for i in range(N)),
+                          list((parameters[i],
+                                T.switch(T.lt(abs(parameters[i]),reg[i]),
+                                         zero[i],
+                                         parameters[i] - reg[i]*T.sgn(parameters[i])))
+                               for i in range(N)),
                           allow_input_downcast=True)
     
     def update(*grads):

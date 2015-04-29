@@ -1,10 +1,11 @@
+import pickle, sys
+from argparse import ArgumentParser
 from theano import tensor as T, shared #, function, scan #, compile as theano_compile
 tdot = T.tensordot
 from numpy import float64, array, zeros_like
 from numpy.random import randn, shuffle
-import pickle, sys
+#from scipy import sparse
 from rnn import vocab, update_function, gradient_function, get_data
-from argparse import ArgumentParser
 
 _print = print
 def print(*obj, **kws):
@@ -15,10 +16,10 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('filename')
     parser.add_argument('--dim', type=int, default=16)
-    parser.add_argument('--rate', type=float64, default=1.)
-    parser.add_argument('--ada', type=float64, default=0.99)
-    parser.add_argument('--mom', type=float64, default=0.9)
-    parser.add_argument('--reg', type=float64, nargs=4, default=[1.,1,1,1])
+    parser.add_argument('--rate', type=float64, default=4.)
+    parser.add_argument('--ada', type=float64, default=0.5)
+    parser.add_argument('--mom', type=float64, default=0.5)
+    parser.add_argument('--reg', type=float64, nargs=4, default=[2.,4,8,1])
     parser.add_argument('--batch', type=int, default=0)
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--init', type=float64, default=0.1)
@@ -38,10 +39,13 @@ if __name__ == '__main__':
     params = [wQuad, wLin, wSent, embed]
     
     train, test, dev = get_data()
-    
     n_items = len(train)
-    arg.reg = [x/n_items for x in arg.reg]
-    # Sort out others?
+    
+    if arg.batch == 0:
+        arg.reg = [x/n_items for x in arg.reg]
+        arg.mom = 1 - (1-arg.mom)/n_items
+        arg.ada = 1 - (1-arg.ada)/n_items
+        arg.rate /= n_items
     
     update = update_function(params,
                              learningRate = arg.rate,
@@ -64,10 +68,10 @@ if __name__ == '__main__':
             embids, left, right, scores = x
             sentembed = array([embeddings[j] for j in embids])
             grad = gradient(sentembed, left, right, scores)
-            embgrad = zeros_like(embeddings)  # Sparse matrix?
+            embgrad = zeros_like(embeddings) # sparse.lil_matrix(embeddings.shape)
             for n, j in enumerate(embids):
                 embgrad[j] += grad[3][n]
-            grad[3] = embgrad
+            grad[3] = embgrad #.tocsr()
             update(*grad)
             if v==100: v=1; print(wSent.get_value(borrow=True))
             else: v+=1
@@ -96,10 +100,18 @@ def descend():
     
     update(*total_grad)"""
 """Interactive...
-with open('../data/model/new.pk', 'rb') as f:
-    newstuff = pickle.load(f)
-def word2sentNew(text):
-    return newstuff[2].dot(newstuff[3][getembid(getid(text))])
+pos = ['good','great','interesting','wonderful','terrific','stunning','funny','fantastic']
+neg = ['bad','awful','terrible','boring','dull','uninteresting','lifeless','poor']
+with open('../data/model/y.pk', 'rb') as f:
+    stuff = pickle.load(f)
+def word2sent(text):
+    return stuff[2].dot(stuff[3][getembid(getid(text))])
+minitest()
+def minitest():
+    for w in pos: print(word2sent(w))
+    print('-')
+    for w in neg: print(word2sent(w))
+minitest()
 embeddings=embed.get_value()
 m_embids = (19753, 16077)
 madeup = [[embeddings[j] for j in m_embids], (0,), (1,), (1,0.6,1)]
