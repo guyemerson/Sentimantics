@@ -5,10 +5,11 @@ tdot = T.tensordot
 from numpy import float64, array, zeros_like
 from numpy.random import randn, shuffle
 #from scipy import sparse
+from math import sqrt
 from rnn import vocab, update_function, gradient_function, get_data
 
 _print = print
-def print(*obj, **kws):
+def print(*obj, **kws):  # @ReservedAssignment
     _print(*obj, **kws)
     sys.stdout.flush()
 
@@ -23,6 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch', type=int, default=0)
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--init', type=float64, default=0.1)
+    parser.add_argument('--gran', type=int, default=5)
     
     arg = parser.parse_args()
     
@@ -33,7 +35,10 @@ if __name__ == '__main__':
     
     wQuad = shared(norm*randn(dim,dim,dim), name='wQuad')
     wLin  = shared(norm*randn(dim,2*dim), name='wLin')
-    wSent = shared(norm*randn(dim), name='wSent')
+    if arg.gran:
+        wSent = shared(norm*randn(arg.gran,dim), name='wSent')
+    else:
+        wSent = shared(norm*randn(dim), name='wSent')
     embed = shared(norm*randn(vocab,dim), name='embed')
     
     params = [wQuad, wLin, wSent, embed]
@@ -52,11 +57,21 @@ if __name__ == '__main__':
                              adaDecayCoeff = arg.ada,
                              momDecayCoeff = arg.mom,
                              regularisation = arg.reg)
-    gradient = gradient_function(wQuad, wLin, wSent)
+    gradient, error = gradient_function(wQuad, wLin, wSent)
     
     def save():
         with open(arg.filename, 'wb') as f:
             pickle.dump([x.get_value() for x in params], f)
+    
+    def evaluate(data):
+        loss = 0
+        embeddings = embed.get_value(borrow=True)
+        for x in data:
+            embids, left, right, scores = x
+            sentembed = array([embeddings[j] for j in embids])
+            loss += error(sentembed, left, right, scores)
+        N = sum(len(x[-1]) for x in data)
+        return sqrt(loss/N) 
     
     print('Beginning training')
     
@@ -75,7 +90,7 @@ if __name__ == '__main__':
             update(*grad)
             if v==100: v=1; print(wSent.get_value(borrow=True))
             else: v+=1
-        print(i+1)
+        print("\nEpoch {} complete!\nError on devset:\n\n{}\n\n".format(i+1, evaluate(dev)))
         save()
     
     
@@ -102,7 +117,7 @@ def descend():
 """Interactive...
 pos = ['good','great','interesting','wonderful','terrific','stunning','funny','fantastic']
 neg = ['bad','awful','terrible','boring','dull','uninteresting','lifeless','poor']
-with open('../data/model/y.pk', 'rb') as f:
+with open('../data/model/y2.pk', 'rb') as f:
     stuff = pickle.load(f)
 def word2sent(text):
     return stuff[2].dot(stuff[3][getembid(getid(text))])

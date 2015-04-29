@@ -1,6 +1,8 @@
 from theano import tensor as T, shared, function, scan #, sparse as S #, compile as theano_compile
 tdot = T.tensordot
+from theano.tensor.nnet import softmax, sigmoid
 from numpy import float64, array, zeros_like
+from math import ceil
 
 bankDir = '../data/stanfordSentimentTreebank/'
 
@@ -106,12 +108,12 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
 
 # Function to calculate the gradient
 
-def gradient_function(wQuad, wLin, wSent):
+def gradient_function(wQuad, wLin, wSent, granular=True):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
     wLin  - 2nd order tensor for combining vectors
-    wSent - vector for predicting sentiment
+    wSent - vector(s) for predicting sentiment
     """
     
     def merge(left, right, cur, prev):
@@ -131,18 +133,30 @@ def gradient_function(wQuad, wLin, wSent):
         new = T.set_subtensor(prev[cur], rect, inplace=False)
         return [cur+1, new]
     
-    def cost(vector, gold):
-        """
-        Given an output vector, and the gold standard annotation,
-        calculate the square loss of predicting the gold from the vector
-        """
-        pred = T.nnet.sigmoid(tdot(vector,wSent,(0,0)) ) #+ bSent)
-        return (pred-gold)**2
+    if granular:
+        def cost(vector, gold):
+            """
+            Given an output vector, and the gold standard class,
+            calculate (one minus) the softmax probability of predicting the gold 
+            """
+            prob = softmax(tdot(vector,wSent,(0,1)))  # softmax returns a matrix
+            return 1-prob[0,gold]
+    else:
+        def cost(vector, gold):
+            """
+            Given an output vector, and the gold standard annotation,
+            calculate the square loss of predicting the gold from the vector
+            """
+            pred = sigmoid(tdot(vector,wSent,(0,0)) ) #+ bSent)
+            return (pred-gold)**2
     
     sentembed = T.dmatrix('sentembed')
     leftindices = T.bvector('leftindices')
     rightindices= T.bvector('rightindices')
-    senti = T.dvector('senti')
+    if granular:
+        senti = T.bvector('senti')
+    else:
+        senti = T.dvector('senti')
     n,m = T.shape(sentembed)
     padded = T.concatenate((sentembed,T.zeros((n-1,m),'float64')))
     
@@ -152,6 +166,7 @@ def gradient_function(wQuad, wLin, wSent):
                        outputs_info=[n,
                                      padded])
     vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
+    
     loss, _ = scan(cost,
                      sequences=[vec,
                                 senti],
@@ -160,17 +175,19 @@ def gradient_function(wQuad, wLin, wSent):
     
     grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
     find_grad = function([sentembed,leftindices,rightindices,senti], grads, allow_input_downcast=True)
+    find_error= function([sentembed,leftindices,rightindices,senti], total, allow_input_downcast=True)
     
-    return find_grad
+    return find_grad, find_error
 
 
 # Load sentences
 
-def get_data():
+def get_data(granularity=5):
     """
     Returns three lists of datapoints in the form:
     [embedding ids, left children, right children, sentiment scores]
     The lists are: train, test, dev
+    If granularity is nonzero, splits the sentiment score into as many bins
     """
     
     train = []
@@ -208,11 +225,14 @@ def get_data():
                     else: nonterm.append(right)
                 text = ' '.join(tokens[min(terminals):max(terminals)+1])
                 ids.append(getid(text))
+            scores = list(map(getsent,ids))
+            if granularity:
+                scores = [max(ceil(x*granularity)-1,0) for x in scores]  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
             # Record data
             datapoint = [embids,
-                         array(leftchildren),
-                         array(rightchildren),
-                         array(list(map(getsent,ids)))]
+                         array(leftchildren, 'int8'),
+                         array(rightchildren, 'int8'),
+                         array(scores, 'int8')]
             section = fsplit.readline().strip().split(',')[-1]
             if section == '1':
                 train.append(datapoint)
