@@ -1,7 +1,9 @@
-from theano import tensor as T, shared, function, scan #, sparse as S #, compile as theano_compile
+from theano import tensor as T, shared, function, scan, compile as theano_compile #, sparse as S 
 tdot = T.tensordot
+theano_compile.mode.Mode(linker='cvm', optimizer='fast_run')
 from theano.tensor.nnet import softmax, sigmoid
-from numpy import float64, array, zeros_like
+#from theano.ifelse import ifelse
+from numpy import float64, array, zeros_like, eye
 from math import ceil
 
 bankDir = '../data/stanfordSentimentTreebank/'
@@ -41,7 +43,7 @@ def getembid(pid):
 
 # Function to update weights, using AdaGrad and momentum, and L1 regularisation
 
-def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regularisation):
+def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, reg_one, reg_two):
     """
     parameters - sequence of Theano shared variables
     learningRate - float
@@ -52,7 +54,8 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
     and update the parameters accordingly
     """
     N = len(parameters)
-    assert len(regularisation) == N
+    assert len(reg_one) == N
+    assert len(reg_two) == N
     
     gradient = [T.TensorVariable(p.type, name=p.name+'Grad') for p in parameters] #[:3]]
     #gradient.append(S.csr_matrix(parameters[3].name+'Grad', 'float64'))
@@ -63,7 +66,9 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
     rate = shared(learningRate, name='rate')
     adaDecay = shared(adaDecayCoeff, name='adaDecay')
     momDecay = shared(momDecayCoeff, name='momDecay')
-    reg = shared(array(regularisation), name='reg')
+    reg1 = shared(array(reg_one), name='reg1')
+    reg2 = shared(array([1-x for x in reg_two]), name='reg2')
+    
     
     update_sum = function(gradient, updates=
                           list((squareSum[i],
@@ -89,11 +94,17 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
                                for i in range(N)),
                           allow_input_downcast=True)
     
-    regularise = function([], updates=
+    regular_l1 = function([], updates=
                           list((parameters[i],
-                                T.switch(T.lt(abs(parameters[i]),reg[i]),
+                                T.switch(T.lt(abs(parameters[i]),reg1[i]),
                                          zero[i],
-                                         parameters[i] - reg[i]*T.sgn(parameters[i])))
+                                         parameters[i] - reg1[i]*T.sgn(parameters[i])))
+                               for i in range(N)),
+                          allow_input_downcast=True)
+    
+    regular_l2 = function([], updates=
+                          list((parameters[i],
+                                reg2[i]*parameters[i])
                                for i in range(N)),
                           allow_input_downcast=True)
     
@@ -101,14 +112,15 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, regu
         update_sum(*grads)
         update_step(*grads)
         update_wei()
-        regularise()
+        regular_l2()
+        regular_l1()
     
     return update #, squareSum, stepSize
 
 
 # Function to calculate the gradient
 
-def gradient_function(wQuad, wLin, wSent, granular=True):
+def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -134,20 +146,40 @@ def gradient_function(wQuad, wLin, wSent, granular=True):
         return [cur+1, new]
     
     if granular:
-        def cost(vector, gold):
+        def classify(vector):
             """
-            Given an output vector, and the gold standard class,
-            calculate (one minus) the softmax probability of predicting the gold 
+            Given an output vector, predict the class
             """
-            prob = softmax(tdot(vector,wSent,(0,1)))  # softmax returns a matrix
-            return 1-prob[0,gold]
+            prob = softmax(tdot(vector,wSent,(0,1)))[0]
+            return T.argmax(prob)
+        if not neighbour:
+            def cost(vector, gold):
+                """
+                Given an output vector, and the gold standard class,
+                calculate (one minus) the softmax probability of predicting the gold 
+                """
+                prob = softmax(tdot(vector,wSent,(0,1)))[0]  # softmax returns a matrix
+                return 1 - prob[gold]
+        else:
+            partial = shared(eye(granular) + eye(granular,k=1)*neighbour + eye(granular,k=-1)*neighbour, 'partial', 'float64')
+            def cost(vector, gold):
+                """
+                As above, but award some points for predicting the neighbouring class
+                """
+                prob = softmax(tdot(vector,wSent,(0,1)))[0]  # softmax returns a matrix
+                return 1 - tdot(prob, partial[gold], (0,0))
     else:
+        def classify(vector):
+            """
+            Given an output vector, predict the sentiment
+            """
+            return sigmoid(tdot(vector,wSent,(0,0)) )
         def cost(vector, gold):
             """
             Given an output vector, and the gold standard annotation,
             calculate the square loss of predicting the gold from the vector
             """
-            pred = sigmoid(tdot(vector,wSent,(0,0)) ) #+ bSent)
+            pred = sigmoid(tdot(vector,wSent,(0,0))) #+ bSent)
             return (pred-gold)**2
     
     sentembed = T.dmatrix('sentembed')
@@ -161,23 +193,28 @@ def gradient_function(wQuad, wLin, wSent, granular=True):
     padded = T.concatenate((sentembed,T.zeros((n-1,m),'float64')))
     
     output, _ = scan(merge,
-                       sequences=[leftindices,
-                                  rightindices],
-                       outputs_info=[n,
-                                     padded])
+                     sequences=[leftindices,
+                                rightindices],
+                     outputs_info=[n,
+                                   padded])
     vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
     
     loss, _ = scan(cost,
-                     sequences=[vec,
-                                senti],
-                     outputs_info=None)
+                   sequences=[vec,
+                              senti],
+                   outputs_info=None)
     total = T.sum(loss)
+    
+    classification, _ = scan(classify,
+                             sequences=[vec],
+                             outputs_info=None)
     
     grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
     find_grad = function([sentembed,leftindices,rightindices,senti], grads, allow_input_downcast=True)
     find_error= function([sentembed,leftindices,rightindices,senti], total, allow_input_downcast=True)
+    predict   = function([sentembed,leftindices,rightindices], classification, allow_input_downcast=True)
     
-    return find_grad, find_error
+    return find_grad, find_error, predict
 
 
 # Load sentences
