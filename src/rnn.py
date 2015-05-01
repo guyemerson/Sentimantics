@@ -264,12 +264,14 @@ def get_data(granularity=5):
                 ids.append(getid(text))
             scores = list(map(getsent,ids))
             if granularity:
-                scores = [max(ceil(x*granularity)-1,0) for x in scores]  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
+                scores = array([max(ceil(x*granularity)-1,0) for x in scores], 'int8')  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
+            else:
+                scores = array(scores, 'float64')
             # Record data
             datapoint = [embids,
                          array(leftchildren, 'int8'),
                          array(rightchildren, 'int8'),
-                         array(scores, 'int8')]
+                         scores]
             section = fsplit.readline().strip().split(',')[-1]
             if section == '1':
                 train.append(datapoint)

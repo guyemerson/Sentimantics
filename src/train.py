@@ -18,17 +18,17 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('filename')
     parser.add_argument('--dim', type=int, default=16)
-    parser.add_argument('--rate', type=float64, default=6.)
+    parser.add_argument('--rate', type=float64, default=1.)
     parser.add_argument('--ada', type=float64, default=0.5)
     parser.add_argument('--mom', type=float64, default=0.1)
-    parser.add_argument('--l1', type=float64, nargs=4, default=[0.5,1,1.5,0.1])
-    parser.add_argument('--l2', type=float64, nargs=4, default=[1.,1,1,1])
+    parser.add_argument('--l1', type=float64, nargs=4, default=[0.2,0.5,1.,0.05])
+    parser.add_argument('--l2', type=float64, nargs=4, default=[1.,1,2,1])
     parser.add_argument('--batch', type=int, default=0)
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--init', type=float64, default=0.001)
     parser.add_argument('--gran', type=int, default=5)
     parser.add_argument('--neigh', type=float64, default=0.5)
-    parser.add_argument('--load')
+    parser.add_argument('--load', type=str, default='')
     parser.add_argument('--dir', default='../data/model/{}.pk')
     
     arg = parser.parse_args()
@@ -78,6 +78,9 @@ if __name__ == '__main__':
             values = pickle.load(f)
             for n,x in enumerate(values):
                 params[n].set_value(x)
+    
+    if arg.load:
+        load()
     
     def evaluate(data, soft=True):
         if not arg.gran: soft=True
@@ -152,6 +155,10 @@ def testfile(name, data=dev, soft=True):
     minitest()
     print(evaluate(data, soft=soft))
 testfile('grain')
+print(*(numpy.max(x.get_value()) for x in params), sep='\n')
+len([x for x in embed.get_value() if numpy.all(x==0)])/len(embed.get_value())
+len([x for x in embed.get_value() if numpy.all(x==0)])
+print(*(len([y for y in x.get_value().flat if y==0])/len(x.get_value().flatten()) for x in params), sep='\n')
 def word2sent(text):
     return numpy.round(softmax(numpy.tensordot(wSent.get_value(True),embed.get_value(True)[getembid(getid(text))],(1,0))), 3)
 def minitest():
@@ -168,4 +175,5 @@ m_embgrad = zeros_like(embeddings)
 for n, j in enumerate(m_embids):
     m_embgrad[j] += m_grad[3][n]
 m_grad[3] = m_embgrad
-update(*m_grad)"""
+update(*m_grad)
+"""
