@@ -54,8 +54,8 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, reg_
     and update the parameters accordingly
     """
     N = len(parameters)
-    assert len(reg_one) == N
-    assert len(reg_two) == N
+    if reg_one: assert len(reg_one.get_value()) == N
+    if reg_two: assert len(reg_two.get_value()) == N
     
     gradient = [T.TensorVariable(p.type, name=p.name+'Grad') for p in parameters] #[:3]]
     #gradient.append(S.csr_matrix(parameters[3].name+'Grad', 'float64'))
@@ -65,10 +65,7 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, reg_
     
     rate = shared(learningRate, name='rate')
     adaDecay = shared(adaDecayCoeff, name='adaDecay')
-    momDecay = shared(momDecayCoeff, name='momDecay')
-    reg1 = shared(array(reg_one), name='reg1')
-    reg2 = shared(array([1-x for x in reg_two]), name='reg2')
-    
+    momDecay = shared(momDecayCoeff, name='momDecay')    
     
     update_sum = function(gradient, updates=
                           list((squareSum[i],
@@ -94,57 +91,41 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, reg_
                                for i in range(N)),
                           allow_input_downcast=True)
     
-    regular_l1 = function([], updates=
-                          list((parameters[i],
-                                T.switch(T.lt(abs(parameters[i]),reg1[i]),
-                                         zero[i],
-                                         parameters[i] - reg1[i]*T.sgn(parameters[i])))
-                               for i in range(N)),
-                          allow_input_downcast=True)
+    if reg_one:
+        regular_l1 = function([], updates=
+                              list((parameters[i],
+                                    T.switch(T.lt(abs(parameters[i]),reg_one[i]),
+                                             zero[i],
+                                             parameters[i] - reg_one[i]*T.sgn(parameters[i])))
+                                   for i in range(N)),
+                              allow_input_downcast=True)
     
-    regular_l2 = function([], updates=
-                          list((parameters[i],
-                                reg2[i]*parameters[i])
-                               for i in range(N)),
-                          allow_input_downcast=True)
+    if reg_two:
+        reg_two.set_value(array([1-x for x in reg_two.get_value()]))  # Convert to decay version
+        regular_l2 = function([], updates=
+                              list((parameters[i],
+                                    reg_two[i]*parameters[i])
+                                   for i in range(N)),
+                              allow_input_downcast=True)
     
     def update(*grads):
         update_sum(*grads)
         update_step(*grads)
         update_wei()
-        regular_l2()
-        regular_l1()
+        if reg_one: regular_l1()
+        if reg_two: regular_l2()
+    
+    # If regularisation is part of the gradient, we still need to set weights to 0 appropriately for L1, i.e.:
+    # don't allow weights to change sign in one step
+    # if the weight is zero, the step size must be more than the adagrad-reduced (but momentum-increased?) L1 regularisation
     
     return update #, squareSum, stepSize
 
 
-# Function to calculate the gradient
-
-def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
+def classify_and_cost_fns(wSent,granular,neighbour):
     """
-    parameters:
-    wQuad - 3rd order tensor for combining vectors
-    wLin  - 2nd order tensor for combining vectors
-    wSent - vector(s) for predicting sentiment
+    returns functions to classify vectors and find the error
     """
-    
-    def merge(left, right, cur, prev):
-        """
-        Given: a set of embeddings (prev),
-         the index of next node (cur),
-         and the indices of the child nodes (left, right),
-        calculate the embedding for the next node,
-        and output the set of embeddings with this one updated (new),
-        along with the index for the next node (cur+1).
-        """
-        first = prev[left]
-        second= prev[right]
-        cat = T.concatenate((first,second))
-        out = tdot(tdot(wQuad,first,((2),(0))),second,((1),(0))) + tdot(wLin,cat,((1),(0))) #+ bias
-        rect = out * (out >= 0)
-        new = T.set_subtensor(prev[cur], rect, inplace=False)
-        return [cur+1, new]
-    
     if granular:
         def classify(vector):
             """
@@ -182,6 +163,38 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
             pred = sigmoid(tdot(vector,wSent,(0,0))) #+ bSent)
             return (pred-gold)**2
     
+    return classify, cost
+
+
+# Function to calculate the gradient
+
+def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
+    """
+    parameters:
+    wQuad - 3rd order tensor for combining vectors
+    wLin  - 2nd order tensor for combining vectors
+    wSent - vector(s) for predicting sentiment
+    """
+    
+    def merge(left, right, cur, prev):
+        """
+        Given: a set of embeddings (prev),
+         the index of next node (cur),
+         and the indices of the child nodes (left, right),
+        calculate the embedding for the next node,
+        and output the set of embeddings with this one updated (new),
+        along with the index for the next node (cur+1).
+        """
+        first = prev[left]
+        second= prev[right]
+        cat = T.concatenate((first,second))
+        out = tdot(tdot(wQuad,first,(2,0)),second,(1,0)) + tdot(wLin,cat,(1,0)) #+ bias
+        rect = out * (out >= 0)
+        new = T.set_subtensor(prev[cur], rect, inplace=False)
+        return [cur+1, new]
+    
+    classify, cost = classify_and_cost_fns(wSent, granular, neighbour)
+    
     sentembed = T.dmatrix('sentembed')
     leftindices = T.bvector('leftindices')
     rightindices= T.bvector('rightindices')
@@ -213,6 +226,87 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
     find_grad = function([sentembed,leftindices,rightindices,senti], grads, allow_input_downcast=True)
     find_error= function([sentembed,leftindices,rightindices,senti], total, allow_input_downcast=True)
     predict   = function([sentembed,leftindices,rightindices], classification, allow_input_downcast=True)
+    
+    return find_grad, find_error, predict
+
+
+def gradient_dmrs(wQuad, wHead, wDep, wSent, granular=False, neighbour=False):
+    """
+    parameters:
+    wQuad - 3rd order tensor for combining vectors
+    wHead, wDep - 2nd order tensors for combining vectors (applied to head and dependent, respectively)
+    wSent - vector(s) for predicting sentiment
+    """
+    
+    def merge(head, first, second, third, fourth, fifth, cur, prev):
+        """
+        Given: a set of embeddings (prev),
+         the index of next node (cur),
+         and the indices of the child nodes (first, ..., fifth),
+        calculate the embedding for the next node,
+        and output the set of embeddings with this one updated (new),
+        along with the index for the next node (cur+1).
+        """
+        v0 = prev[head]
+        v1 = prev[first]  # Should be zero if index >= cur
+        v2 = prev[second]
+        v3 = prev[third]
+        v4 = prev[fourth]
+        v5 = prev[fifth]
+        mod = tdot(wQuad,v0,(1,0))
+        out = tdot(wHead,v0,(1,0)) \
+             +tdot(wDep,v1,(1,0)) + tdot(mod,v1,(1,0)) \
+             +tdot(wDep,v2,(1,0)) + tdot(mod,v2,(1,0)) \
+             +tdot(wDep,v3,(1,0)) + tdot(mod,v3,(1,0)) \
+             +tdot(wDep,v4,(1,0)) + tdot(mod,v4,(1,0)) \
+             +tdot(wDep,v5,(1,0)) + tdot(mod,v5,(1,0))
+        rect = out * (out >= 0)
+        new = T.set_subtensor(prev[cur], rect, inplace=False)
+        return [cur+1, new]
+    
+    
+    classify, cost = classify_and_cost_fns(wSent, granular, neighbour)
+    
+    sentembed = T.dmatrix('sentembed')
+    head = T.bvector('head')
+    first= T.bvector('first')
+    second= T.bvector('second')
+    third= T.bvector('third')
+    fourth= T.bvector('fourth')
+    fifth= T.bvector('fifth')
+    if granular:
+        senti = T.bvector('senti')
+    else:
+        senti = T.dvector('senti')
+    n,m = T.shape(sentembed)
+    k = T.shape(head)
+    padded = T.concatenate((sentembed,T.zeros((k,m),'float64')))
+    
+    output, _ = scan(merge,
+                     sequences=[head,
+                                first,
+                                second,
+                                third,
+                                fourth,
+                                fifth],
+                     outputs_info=[n,
+                                   padded])
+    vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
+    
+    loss, _ = scan(cost,
+                   sequences=[vec,
+                              senti],
+                   outputs_info=None)
+    total = T.sum(loss)
+    
+    classification, _ = scan(classify,
+                             sequences=[vec],
+                             outputs_info=None)
+    
+    grads = T.grad(total, [wQuad,wHead,wDep,wSent,sentembed])
+    find_grad = function([sentembed,head,first,second,third,fourth,fifth,senti], grads, allow_input_downcast=True)
+    find_error= function([sentembed,head,first,second,third,fourth,fifth,senti], total, allow_input_downcast=True)
+    predict   = function([sentembed,head,first,second,third,fourth,fifth], classification, allow_input_downcast=True)
     
     return find_grad, find_error, predict
 

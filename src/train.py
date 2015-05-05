@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from theano import tensor as T, shared, compile as theano_compile #, function, scan
 tdot = T.tensordot
 theano_compile.mode.Mode(linker='cvm', optimizer='fast_run')
-from numpy import float64, array, zeros_like
+from numpy import float64, array, zeros_like, sign
 from numpy.random import randn, shuffle
 #from scipy import sparse
 from math import sqrt
@@ -17,19 +17,20 @@ def print(*obj, **kws):  # @ReservedAssignment
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('filename')
+    parser.add_argument('--dir', default='../data/model/{}.pk')
+    parser.add_argument('--load', type=str, default='')
     parser.add_argument('--dim', type=int, default=16)
     parser.add_argument('--rate', type=float64, default=1.)
     parser.add_argument('--ada', type=float64, default=0.5)
     parser.add_argument('--mom', type=float64, default=0.1)
     parser.add_argument('--l1', type=float64, nargs=4, default=[0.2,0.5,1.,0.05])
     parser.add_argument('--l2', type=float64, nargs=4, default=[1.,1,2,1])
+    parser.add_argument('-adareg', action='store_const', const=True, default=False)
     parser.add_argument('--batch', type=int, default=0)
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--init', type=float64, default=0.001)
     parser.add_argument('--gran', type=int, default=5)
     parser.add_argument('--neigh', type=float64, default=0.5)
-    parser.add_argument('--load', type=str, default='')
-    parser.add_argument('--dir', default='../data/model/{}.pk')
     
     arg = parser.parse_args()
     
@@ -61,13 +62,23 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError
     
-    update = update_function(params,
-                             learningRate = arg.rate,
-                             adaDecayCoeff = arg.ada,
-                             momDecayCoeff = arg.mom,
-                             reg_one = arg.l1,
-                             reg_two = arg.l2)
+    reg_one = shared(array(arg.l1), name='reg1')
+    reg_two = shared(array(arg.l2), name='reg2')
+    
+    reg1 = reg_one.get_value(borrow=True)
+    reg2 = reg_two.get_value(borrow=True)
+    
+    if arg.adareg:
+        update = update_function(params, arg.rate, arg.ada, arg.mom, False, False)
+    else: 
+        update = update_function(params, arg.rate, arg.ada, arg.mom, reg_one, reg_two)
     gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
+    
+    def add_reg(grads):
+        for n,x in enumerate(grads):
+            mat = params[n].get_value(borrow=True)
+            x += reg2[n]*mat
+            x += reg1[n]*sign(mat)
     
     def save():
         with open(arg.savefile, 'wb') as f:
@@ -115,6 +126,7 @@ if __name__ == '__main__':
             for n, j in enumerate(embids):
                 embgrad[j] += grad[3][n]
             grad[3] = embgrad #.tocsr()
+            if arg.adareg: add_reg(grad)
             update(*grad)
             if v==100: v=1; print(wSent.get_value(borrow=True))
             else: v+=1
@@ -176,4 +188,9 @@ for n, j in enumerate(m_embids):
     m_embgrad[j] += m_grad[3][n]
 m_grad[3] = m_embgrad
 update(*m_grad)
+def embof(text):
+    return getembid(getid(text))
+def sentof(tokens, leftch, rightch):
+    sentembed = array([embed.get_value(borrow=True)[i] for i in map(embof, tokens)])
+    return classes(sentembed, leftch, rightch)
 """
