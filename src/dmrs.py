@@ -46,8 +46,8 @@ class Graph(dict):
         self.root = None
         self.undirected = set()
     def __setitem__(self,key,value):
-        assert type(key) == int
-        if type(value) == str:
+        assert isinstance(key,int)
+        if isinstance(value,str):
             super().__setitem__(key,Node(key,value))
         else:
             assert value.nodeid == key
