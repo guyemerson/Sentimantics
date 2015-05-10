@@ -1,5 +1,5 @@
 from delphin.mrs import simplemrs
-from copy import copy, deepcopy
+from copy import copy
 
 # Lemmas that should be skipped
 SKIP = ['udef_q_rel', 'def_implicit_q_rel', 'focus_d_rel', 'id_rel']
@@ -152,7 +152,7 @@ with open("../data/sentibank123.mrs",'r') as f:
         # Set up all nodes in the graph, except those to be skipped
         for n in mrs.nodes:
             nodeid = n.nodeid
-            pred = str(n.pred).strip('"_')
+            pred = n.pred.string.strip('"_')
             if pred in SKIP:
                 ignore.append(nodeid)
             else:
