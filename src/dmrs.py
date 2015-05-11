@@ -1,6 +1,7 @@
 from delphin.mrs import dmrx
 from copy import copy
 import pickle
+from collections import deque
 
 # Lemmas that should be skipped
 SKIP = ['udef_q_rel', 'def_implicit_q_rel', 'focus_d_rel', 'id_rel']
@@ -62,7 +63,7 @@ class Graph(dict):
                 string += " ({})\n".format(" ".join(str(x[1].nodeid) for x in node.incoming))
             else:
                 string += " (root)\n"
-            for label, child in node.outgoing:
+            for label, child in sorted(node.outgoing, key=lambda x:x[1].nodeid):
                 string += "  {} {}".format(child.nodeid, label) + '\n'
         string += "undirected:\n"
         for pair in self.undirected:
@@ -143,6 +144,22 @@ class Graph(dict):
             return True
         else:
             return False
+    def bottom_up(self, safe=False):
+        if safe:
+            assert not self.cycle()
+        discard = set()
+        queue = deque(self.leaves())
+        while queue:
+            new = queue.popleft()
+            if new.children() - discard:
+                queue.append(new)
+            else:
+                discard.add(new)
+                for parent in sorted(new.parents(), key=lambda x:x.nodeid):
+                    if not parent in discard and not parent in queue:
+                        queue.append(parent)
+                yield new
+
 
 if __name__ == "__main__":
     good = 0
@@ -230,6 +247,8 @@ if __name__ == "__main__":
                 elif len(modlinks) > 1:
                     modlinks.sort(key=lambda x:x[0])
                     node.reverse(modlinks[-1],verbose=debug)
+                
+                # Reverse H or HEQ links if there are no incoming links?
             
             # Remove singletons
             if not graph.connected():
@@ -273,6 +292,7 @@ if __name__ == "__main__":
                 root_lemmas_trunk = {x[-6:] for x in root_lemmas}
                 if 'implicit_conj_rel' in root_lemmas or '_c_rel' in root_lemmas_trunk:
                     for node in reversed(list(graph)):
+                        ### Hang on, this also removes the non-roots...
                         if node.lemma[-6:] == '_c_rel' or node.lemma == 'implicit_conj_rel':
                             leftenkel, rightenkel, other_link = set(), set(), set()
                             for label, child in node.outgoing:
