@@ -320,7 +320,7 @@ if __name__ == "__main__":
                 print(line_num+1, "multiple roots", end='')
                 if not debug:
                     pickle.dump(None,fout)
-                    ferr.write('{} multiroot {}\n'.format(line_num+1, graph.roots()))
+                    ferr.write('{} multiroot {}\n'.format(line_num+1, " ".join(graph.roots())))
             
                 if graph.connected():
                     print(":")

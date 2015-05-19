@@ -2,9 +2,10 @@ from theano import tensor as T, shared, function, scan, compile as theano_compil
 tdot = T.tensordot
 theano_compile.mode.Mode(linker='cvm', optimizer='fast_run')
 from theano.tensor.nnet import softmax, sigmoid
-#from theano.ifelse import ifelse
 from numpy import float64, array, zeros_like, eye
-from math import ceil
+from math import ceil, floor
+import pickle
+from graph import Graph, Node  # @UnusedImport
 
 bankDir = '../data/stanfordSentimentTreebank/'
 
@@ -40,6 +41,35 @@ def getsent(pid):
 def getembid(pid):
     return embeddingid[pid]
 
+predid = {}
+linkid = {}
+pred_vocab = 0
+linknum = 1 # the first type of link will connect a fleshed out node with the bare node
+maxlink = 0
+with open('../data/sentibank123_graph.pk','rb') as f:
+    try:
+        while True:
+            graph = pickle.load(f)
+            if graph:
+                for node in graph:
+                    base = node.lemma #.split('_')[0]
+                    if not base in predid:
+                        predid[base] = pred_vocab
+                        pred_vocab += 1
+                    for label, _ in sorted(node.outgoing, key=lambda x:x[0]):
+                        if not label in linkid:
+                            linkid[label] = linknum
+                            linknum += 1
+                    maxlink = max(maxlink, len(node.outgoing))
+                    #if len(node.outgoing) == 9:
+                    #    print(graph)
+    except EOFError:
+        pass
+
+def getpredid(lemma):
+    return predid[lemma]
+def getlinkid(label):
+    return linkid[label]
 
 # Function to update weights, using AdaGrad and momentum, and L1 regularisation
 
@@ -190,7 +220,7 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
         cat = T.concatenate((first,second))
         out = tdot(tdot(wQuad,first,(2,0)),second,(1,0)) + tdot(wLin,cat,(1,0)) #+ bias
         rect = out * (out >= 0)
-        new = T.set_subtensor(prev[cur], rect, inplace=False)
+        new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
     classify, cost = classify_and_cost_fns(wSent, granular, neighbour)
@@ -230,65 +260,52 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
     return find_grad, find_error, predict
 
 
-def gradient_dmrs(wQuad, wHead, wDep, wSent, granular=False, neighbour=False):
+def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
-    wHead, wDep - 2nd order tensors for combining vectors (applied to head and dependent, respectively)
+    wLin = [wHead, wDep] - two 2nd order tensors for combining vectors (applied to head and dependent, respectively)
     wSent - vector(s) for predicting sentiment
     """
+    if labelled:
+        raise NotImplementedError
+    dim = wQuad.get_value(borrow=True).shape[0]
     
-    def merge(head, first, second, third, fourth, fifth, cur, prev):
+    def merge(children, cur, prev):
         """
         Given: a set of embeddings (prev),
          the index of next node (cur),
-         and the indices of the child nodes (first, ..., fifth),
+         and the indices of the child nodes (children), with the first item being the head
         calculate the embedding for the next node,
         and output the set of embeddings with this one updated (new),
         along with the index for the next node (cur+1).
         """
-        v0 = prev[head]
-        v1 = prev[first]  # Should be zero if index >= cur
-        v2 = prev[second]
-        v3 = prev[third]
-        v4 = prev[fourth]
-        v5 = prev[fifth]
+        v0 = prev[children[0]]
+        v = T.zeros((max_children-1, dim), 'float64')
+        for i in range(1,max_children):
+            v = T.set_subtensor(v[i-1], prev[children[i]])  # Should be the zero vector if index >= cur
         mod = tdot(wQuad,v0,(1,0))
-        out = tdot(wHead,v0,(1,0)) \
-             +tdot(wDep,v1,(1,0)) + tdot(mod,v1,(1,0)) \
-             +tdot(wDep,v2,(1,0)) + tdot(mod,v2,(1,0)) \
-             +tdot(wDep,v3,(1,0)) + tdot(mod,v3,(1,0)) \
-             +tdot(wDep,v4,(1,0)) + tdot(mod,v4,(1,0)) \
-             +tdot(wDep,v5,(1,0)) + tdot(mod,v5,(1,0))
+        out = tdot(wLin[0],v0,(1,0)) \
+              + T.sum(tdot(wLin[1],v,(1,1)) + tdot(mod,v,(1,1)), 1)
         rect = out * (out >= 0)
-        new = T.set_subtensor(prev[cur], rect, inplace=False)
+        new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
     
     classify, cost = classify_and_cost_fns(wSent, granular, neighbour)
     
     sentembed = T.dmatrix('sentembed')
-    head = T.bvector('head')
-    first= T.bvector('first')
-    second= T.bvector('second')
-    third= T.bvector('third')
-    fourth= T.bvector('fourth')
-    fifth= T.bvector('fifth')
+    children = T.bmatrix('children')
     if granular:
         senti = T.bvector('senti')
     else:
         senti = T.dvector('senti')
     n,m = T.shape(sentembed)
-    k = T.shape(head)
-    padded = T.concatenate((sentembed,T.zeros((k,m),'float64')))
+    j,_ = T.shape(children)
+    padded = T.concatenate((sentembed,T.zeros((j,m),'float64')))
     
     output, _ = scan(merge,
-                     sequences=[head,
-                                first,
-                                second,
-                                third,
-                                fourth,
-                                fifth],
+                     sequences=[children],
                      outputs_info=[n,
                                    padded])
     vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
@@ -303,10 +320,10 @@ def gradient_dmrs(wQuad, wHead, wDep, wSent, granular=False, neighbour=False):
                              sequences=[vec],
                              outputs_info=None)
     
-    grads = T.grad(total, [wQuad,wHead,wDep,wSent,sentembed])
-    find_grad = function([sentembed,head,first,second,third,fourth,fifth,senti], grads, allow_input_downcast=True)
-    find_error= function([sentembed,head,first,second,third,fourth,fifth,senti], total, allow_input_downcast=True)
-    predict   = function([sentembed,head,first,second,third,fourth,fifth], classification, allow_input_downcast=True)
+    grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
+    find_grad = function([sentembed,children,senti], grads, allow_input_downcast=True)
+    find_error= function([sentembed,children,senti], total, allow_input_downcast=True)
+    predict   = function([sentembed,children], classification, allow_input_downcast=True)
     
     return find_grad, find_error, predict
 
@@ -374,4 +391,168 @@ def get_data(granularity=5):
             else:
                 dev.append(datapoint)
     
+    return [train, test, dev]
+
+
+def min_ignore(a,b):
+    """Return the minimum of a and b, ignoring -1"""
+    if a == -1:
+        return b
+    elif b == -1:
+        return a
+    else:
+        return min(a,b)
+def max_ignore(a,b):
+    """Return the maximum of a and b, ignoring -1"""
+    if a == -1:
+        return b
+    elif b == -1:
+        return a
+    else:
+        return max(a,b)
+
+def get_dmrs_data(granularity=5):
+    """
+    Returns three lists of datapoints in the form:
+    [embedding ids, child_ids, child_labels, sentiment scores]
+    The lists are: train, test, dev
+    If granularity is nonzero, splits the sentiment score into as many bins
+    """
+    
+    train, test, dev = [], [], []
+    
+    with open(bankDir+'SOStr.txt','r') as ftext, \
+         open(bankDir+'STree.txt','r') as ftree, \
+         open(bankDir+'datasetSplit.txt','r') as fsplit, \
+         open('../data/sentibank123_align.txt','r') as falign, \
+         open('../data/sentibank123_graph.pk','rb') as fgraph:
+        fsplit.readline()
+        for line in ftext:
+            # Load each data point
+            tree_line = ftree.readline()
+            split_line = fsplit.readline()
+            align_line = falign.readline()
+            graph = pickle.load(fgraph)
+            if graph:
+                # Look up IDs for lemmas
+                lemmas = []
+                nodeid_to_orig = {}
+                for i, node in enumerate(graph):
+                    lemmas.append(node.lemma)
+                    nodeid_to_orig[node.nodeid] = i
+                predids = tuple(map(getpredid, lemmas))
+                # Unpack alignment
+                spans = [None] * len(lemmas)
+                nodeid_to_span = {}
+                for i, x in enumerate(align_line.split()):
+                    nodeid, start, end = map(int,x.split(':'))
+                    if nodeid in graph:
+                        nodeid_to_span[nodeid] = (start, end)
+                        spans[nodeid_to_orig[nodeid]] = (start, end)
+                if 0 in graph:
+                    start = min(x[0] for x in spans if x)
+                    end   = max(x[1] for x in spans if x)
+                    nodeid_to_span[0] = (start, end)
+                    spans[nodeid_to_orig[0]] = (start, end)
+                # Construct constituent phrases to find their spans and sentiments
+                tokens = line.rstrip().split('|')
+                N = len(tokens)
+                tok_ids = list(map(getid, tokens))
+                tok_spans = [(i,i) for i in range(N)]
+                tree = [int(x)-1 for x in tree_line.rstrip().split('|')] # -1 for 0-indexing
+                reverse = tree[::-1]
+                leftchildren = []
+                rightchildren = []
+                for x in range(N,2*N-1):
+                    leftchildren.append(tree.index(x))
+                    rightchildren.append(2*N-2-reverse.index(x))
+                for i in range(N,2*N-1):
+                    nonterm = [i]
+                    terminals = []
+                    while nonterm:
+                        chosen = nonterm.pop() - N
+                        left = leftchildren[chosen]
+                        right = rightchildren[chosen]
+                        if left < N : terminals.append(left)
+                        else: nonterm.append(left)
+                        if right < N: terminals.append(right)
+                        else: nonterm.append(right)
+                    first = min(terminals)
+                    last = max(terminals)
+                    text = ' '.join(tokens[first:last+1])
+                    tok_spans.append((first,last))
+                    tok_ids.append(getid(text))
+                tok_scores = list(map(getsent,tok_ids))
+                if granularity:
+                    tok_scores = [max(ceil(x*granularity)-1,0) for x in tok_scores]  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
+                span_to_score = {tok_spans[n]:score for n,score in enumerate(tok_scores)}
+                if granularity:
+                    span_to_score[-1,-1] = floor(granularity/2)
+                else:
+                    span_to_score[-1,-1] = 0.5
+                # Get spans for all subgraphs, and link information for nonterminals
+                nodeid_to_full_span = {}
+                nodeid_to_index = {}
+                child_indices = []
+                child_labels = []
+                for i, node in enumerate(graph.bottom_up()):
+                    nid = node.nodeid
+                    start, end = nodeid_to_span[nid]
+                    if node.outgoing:
+                        child_indices.append([nodeid_to_orig[nid]])
+                        child_labels.append([0])
+                        for label, child in sorted(node.outgoing, key=lambda x:x[1].nodeid):
+                            child_indices[-1].append(nodeid_to_index[child.nodeid])
+                            child_labels[-1].append(getlinkid(label))
+                            new_start, new_end = nodeid_to_full_span[child.nodeid]
+                            start = min_ignore(start, new_start)
+                            end = max_ignore(end, new_end)
+                        # Add padding for Theano
+                        while len(child_labels[-1]) <= maxlink:
+                            child_indices[-1].append(len(spans))
+                            child_labels[-1].append(linknum)
+                        nodeid_to_full_span[nid] = (start,end)
+                        nodeid_to_index[nid] = len(spans)
+                        spans.append((start,end))
+                    else:
+                        nodeid_to_full_span[nid] = (start,end)
+                        nodeid_to_index[nid] = nodeid_to_orig[nid]
+                scores = []
+                for start, end in spans:
+                    if (start, end) in span_to_score:
+                        scores.append(span_to_score[start,end])
+                    else:
+                        found = False
+                        k = 0
+                        while not found:
+                            k += 1
+                            # Try larger
+                            for i in range(k+1):
+                                new_start = start - k + i
+                                new_end = end + i
+                                if (new_start, new_end) in span_to_score:
+                                    found = True
+                                    break
+                            # Try smaller
+                            if not found and k <= (end-start):
+                                for i in range(k+1):
+                                    new_start = start + i
+                                    new_end = end - k + i
+                                    if (new_start, new_end) in span_to_score:
+                                        found = True
+                                        break
+                        scores.append(span_to_score[new_start,new_end])
+                # Record data
+                datapoint = [array(predids),
+                             array(child_indices),
+                             array(child_labels),
+                             array(scores)]
+                section = split_line.strip().split(',')[-1]
+                if section == '1':
+                    train.append(datapoint)
+                elif section == '2':
+                    test.append(datapoint)
+                else:
+                    dev.append(datapoint)
+                
     return [train, test, dev]
