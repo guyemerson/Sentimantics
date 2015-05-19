@@ -84,7 +84,7 @@ if __name__ == '__main__':
     else: 
         update = update_function(params, arg.rate, arg.ada, arg.mom, reg_one, reg_two)
     if arg.dmrs:
-        gradient, error, classes, pred_gradient = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, arg.gran, arg.neigh)
+        gradient, error, classes, pred_grad, pred_err, pred_class = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, arg.gran, arg.neigh)
     else:
         gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
     
@@ -112,12 +112,28 @@ if __name__ == '__main__':
         loss = 0
         embeddings = embed.get_value(borrow=True)
         for x in data:
-            embids, left, right, scores = x
+            if arg.dmrs:
+                embids, children, _, scores = x
+            else:
+                embids, left, right, scores = x
             sentembed = array([embeddings[j] for j in embids])
             if soft:
-                loss += error(sentembed, left, right, scores)
+                if arg.dmrs:
+                    if children.shape[0] > 0:
+                        loss += error(sentembed, children, scores)
+                    else:
+                        loss += pred_err(sentembed[0], scores[0])
+                else:
+                    loss += error(sentembed, left, right, scores)
             else:
-                for n,x in enumerate(classes(sentembed,left,right)):
+                if arg.dmrs:
+                    if children.shape[0] > 0:
+                        iterator = enumerate(classes(sentembed, children))
+                    else:
+                        iterator = [(0, pred_class(sentembed[0])[()] )]
+                else:
+                    iterator = enumerate(classes(sentembed,left,right))
+                for n,x in iterator:
                     if x != scores[n]:
                         loss += 1
         N = sum(len(x[-1]) for x in data)
@@ -141,7 +157,7 @@ if __name__ == '__main__':
                 else:
                     grad = [zeros_like(wQuad.get_value(borrow=True)),
                             zeros_like(wLin.get_value(borrow=True))]
-                    grad.extend(pred_gradient(sentembed[0], scores[0]))
+                    grad.extend(pred_grad(sentembed[0], scores[0]))
             else:
                 embids, left, right, scores = x
                 sentembed = array([embeddings[j] for j in embids])
