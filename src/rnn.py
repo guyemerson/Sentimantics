@@ -325,7 +325,16 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
     find_error= function([sentembed,children,senti], total, allow_input_downcast=True)
     predict   = function([sentembed,children], classification, allow_input_downcast=True)
     
-    return find_grad, find_error, predict
+    predembed = T.dvector('predembed')
+    if granular:
+        predsenti = T.bscalar('predsenti')
+    else:
+        predsenti = T.dscalar('predsenti')
+    direct = cost(predembed, predsenti)
+    pred_grad = T.grad(direct, [wSent,predembed])
+    find_pred_grad = function([predembed,predsenti], pred_grad, allow_input_downcast=True)
+    
+    return find_grad, find_error, predict, find_pred_grad
 
 
 # Load sentences

@@ -8,6 +8,7 @@ from numpy.random import randn, shuffle
 #from scipy import sparse
 from math import sqrt
 from rnn import vocab, update_function, gradient_function, get_data
+from rnn import pred_vocab, maxlink, gradient_dmrs, get_dmrs_data
 
 _print = print
 def print(*obj, **kws):  # @ReservedAssignment
@@ -19,7 +20,9 @@ if __name__ == '__main__':
     parser.add_argument('filename')
     parser.add_argument('--dir', default='../data/model/{}.pk')
     parser.add_argument('--load', type=str, default='')
-    parser.add_argument('--dim', type=int, default=16)
+    parser.add_argument('-dmrs', action='store_const', const=True, default=False)
+    parser.add_argument('-lab', action='store_const', const=True, default=False)
+    parser.add_argument('--dim', type=int, default=25)
     parser.add_argument('--rate', type=float64, default=1.)
     parser.add_argument('--ada', type=float64, default=0.5)
     parser.add_argument('--mom', type=float64, default=0.1)
@@ -40,17 +43,25 @@ if __name__ == '__main__':
     dim = arg.dim
     norm = arg.init/dim
     
+    if arg.lab:
+        raise NotImplementedError
+    
     wQuad = shared(norm*randn(dim,dim,dim), name='wQuad')
-    wLin  = shared(norm*randn(dim,2*dim), name='wLin')
     if arg.gran:
         wSent = shared(norm*randn(arg.gran,dim), name='wSent')
     else:
         wSent = shared(norm*randn(dim), name='wSent')
-    embed = shared(norm*randn(vocab,dim), name='embed')
+    if arg.dmrs:
+        wLin  = shared(norm*randn(2,dim,dim), name='wLin')
+        embed = shared(norm*randn(pred_vocab,dim), name='embed')
+        train, test, dev = get_dmrs_data()
+    else:
+        wLin  = shared(norm*randn(dim,2*dim), name='wLin')
+        embed = shared(norm*randn(vocab,dim), name='embed')
+        train, test, dev = get_data()
     
     params = [wQuad, wLin, wSent, embed]
     
-    train, test, dev = get_data()
     n_items = len(train)
     
     if arg.batch == 0:
@@ -72,7 +83,10 @@ if __name__ == '__main__':
         update = update_function(params, arg.rate, arg.ada, arg.mom, False, False)
     else: 
         update = update_function(params, arg.rate, arg.ada, arg.mom, reg_one, reg_two)
-    gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
+    if arg.dmrs:
+        gradient, error, classes, pred_gradient = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, arg.gran, arg.neigh)
+    else:
+        gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
     
     def add_reg(grads):
         for n,x in enumerate(grads):
@@ -84,14 +98,14 @@ if __name__ == '__main__':
         with open(arg.savefile, 'wb') as f:
             pickle.dump([x.get_value() for x in params], f)
     
-    def load():
-        with open(arg.loadfile, 'rb') as f:
+    def load(filename):
+        with open(filename, 'rb') as f:
             values = pickle.load(f)
             for n,x in enumerate(values):
                 params[n].set_value(x)
     
     if arg.load:
-        load()
+        load(arg.loadfile)
     
     def evaluate(data, soft=True):
         if not arg.gran: soft=True
@@ -119,9 +133,19 @@ if __name__ == '__main__':
         v = 1
         for x in train:
             embeddings = embed.get_value(borrow=True)  # This might slow down a GPU?
-            embids, left, right, scores = x
-            sentembed = array([embeddings[j] for j in embids])
-            grad = gradient(sentembed, left, right, scores)
+            if arg.dmrs:
+                embids, children, _, scores = x
+                sentembed = array([embeddings[j] for j in embids])
+                if children.shape[0] > 0:
+                    grad = gradient(sentembed, children, scores)
+                else:
+                    grad = [zeros_like(wQuad.get_value(borrow=True)),
+                            zeros_like(wLin.get_value(borrow=True))]
+                    grad.extend(pred_gradient(sentembed[0], scores[0]))
+            else:
+                embids, left, right, scores = x
+                sentembed = array([embeddings[j] for j in embids])
+                grad = gradient(sentembed, left, right, scores)
             embgrad = zeros_like(embeddings) # sparse.lil_matrix(embeddings.shape)
             for n, j in enumerate(embids):
                 embgrad[j] += grad[3][n]
@@ -155,18 +179,14 @@ def descend():
     
     update(*total_grad)"""
 """Interactive...
-pos = ['good','great','interesting','wonderful','terrific','stunning','funny','fantastic']
-neg = ['bad','awful','terrible','boring','dull','uninteresting','lifeless','poor']
+pos = ['good','great']#,'interesting','wonderful','terrific','stunning','funny','fantastic']
+neg = ['bad','terrible']#,'boring','dull','uninteresting','awful','lifeless','poor']
 v = T.dvector()
+from theano import function
+import numpy
+from rnn import getid, getembid
 softmax = function([v],T.nnet.softmax(v))
 arg.dir='../data/model/{}.pk'
-def testfile(name, data=dev, soft=True):
-    arg.load=name
-    arg.loadfile = arg.dir.format(arg.load)
-    load()
-    minitest()
-    print(evaluate(data, soft=soft))
-testfile('grain')
 print(*(numpy.max(x.get_value()) for x in params), sep='\n')
 len([x for x in embed.get_value() if numpy.all(x==0)])/len(embed.get_value())
 len([x for x in embed.get_value() if numpy.all(x==0)])
@@ -177,7 +197,13 @@ def minitest():
     for w in pos: print(word2sent(w))
     print('-')
     for w in neg: print(word2sent(w))
-minitest()
+def loadfile(name):
+    load(arg.dir.format(name))
+def testfile(name, data=dev, soft=True):
+    loadfile(name)
+    minitest()
+    print(evaluate(data, soft=soft))
+testfile('grain')
 embeddings=embed.get_value()
 m_embids = (19753, 16077)
 madeup = [[embeddings[j] for j in m_embids], (0,), (1,), (1,0.6,1)]
