@@ -149,7 +149,7 @@ def update_function(parameters, learningRate, adaDecayCoeff, momDecayCoeff, reg_
     # don't allow weights to change sign in one step
     # if the weight is zero, the step size must be more than the adagrad-reduced (but momentum-increased?) L1 regularisation
     
-    return update #, squareSum, stepSize
+    return update, squareSum, stepSize
 
 
 def classify_and_cost_fns(wSent,granular,neighbour):
@@ -338,7 +338,27 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
     find_pred_error= function([predembed,predsenti], direct_cost, allow_input_downcast=True)
     pred_predict   = function([predembed], direct_class, allow_input_downcast=True)
     
-    return find_grad, find_error, predict, find_pred_grad, find_pred_error, pred_predict
+    def find_grad_safe(emb, chi, sen):
+        if chi.shape[0] > 0:
+            return find_grad(emb, chi, sen)
+        else:
+            zero_grads = [zeros_like(wQuad.get_value(borrow=True)),
+                          zeros_like(wLin.get_value(borrow=True))]
+            return zero_grads + find_pred_grad(emb[0], sen[0])
+    
+    def find_error_safe(emb, chi, sen):
+        if chi.shape[0] > 0:
+            return find_error(emb, chi, sen)
+        else:
+            return find_pred_error(emb[0], sen[0])
+    
+    def predict_safe(emb, chi):
+        if chi.shape[0] > 0:
+            return predict(emb, chi)
+        else:
+            return array([pred_predict(emb[0])])
+    
+    return find_grad_safe, find_error_safe, predict_safe
 
 
 # Load sentences
@@ -424,7 +444,7 @@ def max_ignore(a,b):
     else:
         return max(a,b)
 
-def get_dmrs_data(granularity=5):
+def get_dmrs_data(granularity=5, backoff=False):
     """
     Returns three lists of datapoints in the form:
     [embedding ids, child_ids, child_labels, sentiment scores]
@@ -433,6 +453,8 @@ def get_dmrs_data(granularity=5):
     """
     
     train, test, dev = [], [], []
+    if backoff:
+        orig_train, orig_test, orig_dev = get_data(granularity=granularity)
     
     with open(bankDir+'SOStr.txt','r') as ftext, \
          open(bankDir+'STree.txt','r') as ftree, \
@@ -444,6 +466,7 @@ def get_dmrs_data(granularity=5):
             # Load each data point
             tree_line = ftree.readline()
             split_line = fsplit.readline()
+            section = split_line.strip().split(',')[-1]
             align_line = falign.readline()
             graph = pickle.load(fgraph)
             if graph:
@@ -560,12 +583,20 @@ def get_dmrs_data(granularity=5):
                              array(child_indices),
                              array(child_labels),
                              array(scores)]
-                section = split_line.strip().split(',')[-1]
+                if backoff:
+                    datapoint = (True, datapoint)
+                
                 if section == '1':
                     train.append(datapoint)
                 elif section == '2':
                     test.append(datapoint)
                 else:
                     dev.append(datapoint)
-                
+            elif backoff:
+                if section == '1':
+                    train.append((False, orig_train[len(train)]))
+                elif section == '2':
+                    test.append((False, orig_test[len(test)]))
+                else:
+                    dev.append((False, orig_dev[len(dev)]))
     return [train, test, dev]
