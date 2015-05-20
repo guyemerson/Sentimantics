@@ -54,6 +54,11 @@ def evaluate(embeddings, loss_fn, data, backoff_emb=None, backoff_loss=None, sum
     else:
         return 1 - loss/N
 
+def add_reg(current, unreg, l1, l2):
+    for n,x in enumerate(unreg):
+        x += l2[n]*current[n]
+        x += l1[n]*sign(current[n])
+
 
 if __name__ == '__main__':
     # To run from the command line
@@ -75,6 +80,7 @@ if __name__ == '__main__':
     parser.add_argument('--init', type=float64, default=0.001)
     parser.add_argument('--gran', type=int, default=5)
     parser.add_argument('--neigh', type=float64, default=0.5)
+    parser.add_argument('-freq', action='store_const', const=True, default=False)
     arg = parser.parse_args()
     
     arg.norm = arg.init/arg.dim
@@ -113,16 +119,20 @@ if __name__ == '__main__':
                 return lab_gradient(ids,chi,sen)
             def error(ids,chi,lab,sen):
                 return lab_error(ids,chi,sen)
-            def classes(ids,chi,lab,sen):
-                return lab_classes(ids,chi,sen)
+            def classes(ids,chi,lab):
+                return lab_classes(ids,chi)
     else:
         token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
+    
+
     
     # Calculate the gradient from embedding indices, not embedding vectors
     def gradient(embids, *rest):
         embeddings = embed.get_value(borrow=True)  # This might slow down a GPU?
         sentembed = array([embeddings[j] for j in embids])
         grad = token_gradient(sentembed, *rest)
+        if arg.freq:
+            add_reg([x.get_value(borrow=True) for x in params[:3]]+[sentembed], grad, reg1, reg2)
         embgrad = zeros_like(embeddings)
         for n, j in enumerate(embids):
             embgrad[j] += grad[3][n]
@@ -132,13 +142,12 @@ if __name__ == '__main__':
     if arg.adareg:
         update, squareSum, stepSize = update_function(params, arg.rate, arg.ada, arg.mom, False, False)
         noreg_gradient = gradient
-        def gradient(*args):
-            grads = noreg_gradient(*args)
-            for n,x in enumerate(grads):
-                mat = params[n].get_value(borrow=True)
-                x += reg2[n]*mat
-                x += reg1[n]*sign(mat)
-            return grads
+        if not arg.freq:
+            def gradient(*args):
+                grads = noreg_gradient(*args)
+                current = [x.get_value(borrow=True) for x in params]
+                add_reg(current,grads,reg1,reg2)
+                return grads
     else: 
         update, squareSum, stepSize = update_function(params, arg.rate, arg.ada, arg.mom, reg_one, reg_two)
     
@@ -152,7 +161,7 @@ if __name__ == '__main__':
     def save():
         with open(arg.savefile, 'wb') as f:
             pickle.dump([x.get_value() for x in params], f)
-        with open(arg.auxfile, 'wb') as f:
+        with open(arg.auxsavefile, 'wb') as f:
             pickle.dump([[x.get_value() for x in z] for z in aux_params], f)
     
     def load():
@@ -219,6 +228,15 @@ if False:
     import numpy
     
     print(*(numpy.max(x.get_value()) for x in params), sep='\n')
+    print(*(numpy.average(numpy.abs(x.get_value())) for x in params), sep='\n')
+    #print(numpy.min(numpy.average(numpy.abs(embed.get_value()),1)), sep='\n')
+    
+    from rnn import predid
+    
+    size_list = sorted([(pred, numpy.average(numpy.abs(embed.get_value(True)[embid]))) for pred, embid in predid.items()], key=lambda x:x[1])
+    #print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[:20]))
+    print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[-20:]))
+    
     len([x for x in embed.get_value() if numpy.all(x==0)])/len(embed.get_value())
     len([x for x in embed.get_value() if numpy.all(x==0)])
     print(*(len([y for y in x.get_value().flat if y==0])/len(x.get_value().flatten()) for x in params), sep='\n')
@@ -246,7 +264,7 @@ if False:
         arg.loadfile = arg.dir.format(name)
         load()
         if items: minitest(*items)
-        print(evaluate(data, soft=soft))
+        print(accuracy(data, soft=soft))
     
     def embof(text):
         return getembid(getid(text))
@@ -254,3 +272,12 @@ if False:
         sentembed = array([embed.get_value(borrow=True)[i] for i in map(embof, tokens)])
         return classes(sentembed, leftch, rightch)
     
+    def ids(data):
+        for x in data:
+            for y in x[0]:
+                yield y
+    train_ids = set(ids(train))
+    test_ids = set(ids(test))
+    dev_ids = set(ids(dev))
+    len(test_ids-train_ids)/len(test_ids)
+    len(dev_ids-train_ids)/len(dev_ids)

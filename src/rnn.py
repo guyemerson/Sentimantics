@@ -344,7 +344,8 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         else:
             zero_grads = [zeros_like(wQuad.get_value(borrow=True)),
                           zeros_like(wLin.get_value(borrow=True))]
-            return zero_grads + find_pred_grad(emb[0], sen[0])
+            wSent_grad, predembed_grad = find_pred_grad(emb[0], sen[0])
+            return zero_grads + [wSent_grad, predembed_grad.reshape(1,-1)]
     
     def find_error_safe(emb, chi, sen):
         if chi.shape[0] > 0:
@@ -356,7 +357,7 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         if chi.shape[0] > 0:
             return predict(emb, chi)
         else:
-            return array([pred_predict(emb[0])])
+            return pred_predict(emb[0]).reshape(1,-1)
     
     return find_grad_safe, find_error_safe, predict_safe
 
