@@ -64,8 +64,9 @@ if __name__ == '__main__':
     # To run from the command line
     parser = ArgumentParser()
     parser.add_argument('filename')
-    parser.add_argument('--dir', default='../data/model/{}.pk')
+    parser.add_argument('--dir', default='../data/model/')
     parser.add_argument('--load', type=str, default='')
+    parser.add_argument('--aux', type=str, default='')
     parser.add_argument('-dmrs', action='store_const', const=True, default=False)
     parser.add_argument('-labs', action='store_const', const=True, default=False)
     parser.add_argument('--dim', type=int, default=25)
@@ -81,16 +82,20 @@ if __name__ == '__main__':
     parser.add_argument('--gran', type=int, default=5)
     parser.add_argument('--neigh', type=float64, default=0.5)
     parser.add_argument('-freq', action='store_const', const=True, default=False)
+    parser.add_argument('-root', action='store_const', const=True, default=False)
     arg = parser.parse_args()
+    
+    with open(arg.dir+'settings.txt','a') as f:
+        f.write('{}\t{}\n'.format(' '.join(sys.argv[1:]), arg.__dict__))
     
     arg.norm = arg.init/arg.dim
     params = initialise(arg.gran, arg.norm, arg.dim, arg.dmrs)
     wQuad, wLin, wSent, embed = params
     
     if arg.dmrs:
-        train, test, dev = get_dmrs_data()
+        train, test, dev = get_dmrs_data(granularity=arg.gran, root=arg.root)
     else:
-        train, test, dev = get_data()
+        train, test, dev = get_data(granularity=arg.gran, root=arg.root)
     n_items = len(train)
     
     if arg.batch == 0:
@@ -108,7 +113,7 @@ if __name__ == '__main__':
     reg2 = reg_two.get_value(borrow=True)
     
     if arg.dmrs:
-        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, arg.gran, arg.neigh)
+        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, granular=arg.gran, neighbour=arg.neigh, root=arg.root)
         if arg.labs:
             raise NotImplementedError
         else:
@@ -122,7 +127,7 @@ if __name__ == '__main__':
             def classes(ids,chi,lab):
                 return lab_classes(ids,chi)
     else:
-        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, arg.gran, arg.neigh)
+        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, granular=arg.gran, neighbour=arg.neigh, root=arg.root)
     
 
     
@@ -153,10 +158,14 @@ if __name__ == '__main__':
     
     aux_params = [squareSum, stepSize]
     
+    arg.dir += '{}.pk'
     arg.savefile = arg.dir.format(arg.filename)
     arg.auxsavefile  = arg.dir.format(arg.filename+'-aux')
     arg.loadfile = arg.dir.format(arg.load)
-    arg.auxloadfile = arg.dir.format(arg.load+'-aux')
+    if arg.aux:
+        arg.auxloadfile = arg.dir.format(arg.aux)
+    else:
+        arg.auxloadfile = arg.dir.format(arg.load+'-aux')
     
     def save():
         with open(arg.savefile, 'wb') as f:
@@ -175,8 +184,8 @@ if __name__ == '__main__':
                 for n,x in enumerate(values):
                     for m,y in enumerate(x):
                         aux_params[n][m].set_value(y)
-        except FileNotFoundError:
-            pass
+        except FileNotFoundError as e:
+            if arg.aux: raise e
     
     if arg.load: load()
     
@@ -184,6 +193,12 @@ if __name__ == '__main__':
         if not arg.gran: soft=True
         if soft:
             fn = error
+        elif arg.root:
+            def fn(*args):
+                if classes(*args[:-1]) != args[-1]:
+                    return 1
+                else:
+                    return 0
         else:
             def fn(*args):
                 loss = 0
@@ -193,10 +208,12 @@ if __name__ == '__main__':
                         loss += 1
                 return loss
         
-        return evaluate(embed.get_value(borrow=True), fn, data, RMSq=not(arg.gran))
+        return evaluate(embed.get_value(borrow=True), fn, data, RMSq=not(arg.gran), sum_all=not(arg.root))
 
     
     print('Beginning training')
+    
+    print(accuracy())
     
     for i in range(arg.epoch):
         shuffle(train)
@@ -262,6 +279,7 @@ if False:
         for w in n: print(word2sent(w))
     def testfile(name, data=dev, soft=False, items=(pos,neg)):
         arg.loadfile = arg.dir.format(name)
+        arg.loadauxfile = arg.dir.format(name+'-aux')
         load()
         if items: minitest(*items)
         print(accuracy(data, soft=soft))

@@ -3,7 +3,7 @@ tdot = T.tensordot
 theano_compile.mode.Mode(linker='cvm', optimizer='fast_run')
 from theano.tensor.nnet import softmax, sigmoid
 from numpy import float64, array, zeros_like, eye
-from math import ceil, floor
+from math import ceil
 import pickle
 from graph import Graph, Node  # @UnusedImport
 
@@ -38,6 +38,9 @@ def getid(phrase):
 def getsent(pid):
     return sentiment[pid]
 
+def phrasesent(phrase):
+    return sentiment[phraseid[phrase]]
+
 def getembid(pid):
     return embeddingid[pid]
 
@@ -70,6 +73,11 @@ def getpredid(lemma):
     return predid[lemma]
 def getlinkid(label):
     return linkid[label]
+
+def granular_fn(granularity):
+    def fn(score):
+        return max(ceil(score*granularity)-1,0)
+    return fn
 
 # Function to update weights, using AdaGrad and momentum, and L1 regularisation
 
@@ -198,7 +206,7 @@ def classify_and_cost_fns(wSent,granular,neighbour):
 
 # Function to calculate the gradient
 
-def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
+def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -228,10 +236,6 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
     sentembed = T.dmatrix('sentembed')
     leftindices = T.bvector('leftindices')
     rightindices= T.bvector('rightindices')
-    if granular:
-        senti = T.bvector('senti')
-    else:
-        senti = T.dvector('senti')
     n,m = T.shape(sentembed)
     padded = T.concatenate((sentembed,T.zeros((n-1,m),'float64')))
     
@@ -242,17 +246,31 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
                                    padded])
     vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
     
-    loss, _ = scan(cost,
-                   sequences=[vec,
-                              senti],
-                   outputs_info=None)
-    total = T.sum(loss)
-    
-    classification, _ = scan(classify,
-                             sequences=[vec],
-                             outputs_info=None)
+    if root:
+        if granular:
+            senti = T.bscalar('senti')
+        else:
+            senti = T.dscalar('senti')
+        total = cost(vec[-1], senti)
+        classification = classify(vec[-1])
+        
+    else:
+        if granular:
+            senti = T.bvector('senti')
+        else:
+            senti = T.dvector('senti')
+        loss, _ = scan(cost,
+                       sequences=[vec,
+                                  senti],
+                       outputs_info=None)
+        total = T.sum(loss)
+        
+        classification, _ = scan(classify,
+                                 sequences=[vec],
+                                 outputs_info=None)
     
     grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
+    
     find_grad = function([sentembed,leftindices,rightindices,senti], grads, allow_input_downcast=True)
     find_error= function([sentembed,leftindices,rightindices,senti], total, allow_input_downcast=True)
     predict   = function([sentembed,leftindices,rightindices], classification, allow_input_downcast=True)
@@ -260,7 +278,7 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False):
     return find_grad, find_error, predict
 
 
-def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False):
+def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False, root=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -291,15 +309,10 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
-    
     classify, cost = classify_and_cost_fns(wSent, granular, neighbour)
     
     sentembed = T.dmatrix('sentembed')
     children = T.bmatrix('children')
-    if granular:
-        senti = T.bvector('senti')
-    else:
-        senti = T.dvector('senti')
     n,m = T.shape(sentembed)
     j,_ = T.shape(children)
     padded = T.concatenate((sentembed,T.zeros((j,m),'float64')))
@@ -309,33 +322,47 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
                      outputs_info=[n,
                                    padded])
     vec = output[-1][-1]  # Take just the set of embeddings from the last calculation
+        
+    predembed = T.dvector('predembed')  # For one predicate
     
-    loss, _ = scan(cost,
-                   sequences=[vec,
-                              senti],
-                   outputs_info=None)
-    total = T.sum(loss)
-    
-    classification, _ = scan(classify,
-                             sequences=[vec],
-                             outputs_info=None)
+    if root:
+        if granular:
+            senti = T.bscalar('senti')
+        else:
+            senti = T.dscalar('senti')
+        total = cost(vec[-1], senti)
+        classification = classify(vec[-1])
+        
+        direct_cost = cost(predembed, senti)
+        direct_class = classify(predembed)
+        
+    else:
+        if granular:
+            senti = T.bvector('senti')
+        else:
+            senti = T.dvector('senti')
+        loss, _ = scan(cost,
+                       sequences=[vec,
+                                  senti],
+                       outputs_info=None)
+        total = T.sum(loss)
+        
+        classification, _ = scan(classify,
+                                 sequences=[vec],
+                                 outputs_info=None)
+        
+        direct_cost = cost(predembed, senti[0])
+        direct_class = classify(predembed).reshape(1,-1)
     
     grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
+    pred_grad = T.grad(direct_cost, [wSent,predembed])
+    
     find_grad = function([sentembed,children,senti], grads, allow_input_downcast=True)
     find_error= function([sentembed,children,senti], total, allow_input_downcast=True)
     predict   = function([sentembed,children], classification, allow_input_downcast=True)
     
-    # For one predicate:
-    predembed = T.dvector('predembed')
-    if granular:
-        predsenti = T.bscalar('predsenti')
-    else:
-        predsenti = T.dscalar('predsenti')
-    direct_class= classify(predembed)
-    direct_cost = cost(predembed, predsenti)
-    pred_grad = T.grad(direct_cost, [wSent,predembed])
-    find_pred_grad = function([predembed,predsenti], pred_grad, allow_input_downcast=True)
-    find_pred_error= function([predembed,predsenti], direct_cost, allow_input_downcast=True)
+    find_pred_grad = function([predembed,senti], pred_grad, allow_input_downcast=True)
+    find_pred_error= function([predembed,senti], direct_cost, allow_input_downcast=True)
     pred_predict   = function([predembed], direct_class, allow_input_downcast=True)
     
     def find_grad_safe(emb, chi, sen):
@@ -344,27 +371,27 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         else:
             zero_grads = [zeros_like(wQuad.get_value(borrow=True)),
                           zeros_like(wLin.get_value(borrow=True))]
-            wSent_grad, predembed_grad = find_pred_grad(emb[0], sen[0])
+            wSent_grad, predembed_grad = find_pred_grad(emb[0], sen)
             return zero_grads + [wSent_grad, predembed_grad.reshape(1,-1)]
     
     def find_error_safe(emb, chi, sen):
         if chi.shape[0] > 0:
             return find_error(emb, chi, sen)
         else:
-            return find_pred_error(emb[0], sen[0])
+            return find_pred_error(emb[0], sen)
     
     def predict_safe(emb, chi):
         if chi.shape[0] > 0:
             return predict(emb, chi)
         else:
-            return pred_predict(emb[0]).reshape(1,-1)
+            return pred_predict(emb[0])
     
     return find_grad_safe, find_error_safe, predict_safe
 
 
 # Load sentences
 
-def get_data(granularity=5):
+def get_data(granularity=5, root=False):
     """
     Returns three lists of datapoints in the form:
     [embedding ids, left children, right children, sentiment scores]
@@ -375,6 +402,7 @@ def get_data(granularity=5):
     train = []
     test = []
     dev = []
+    if granularity: granularise = granular_fn(granularity)
     
     with open(bankDir+'SOStr.txt','r') as ftext, \
          open(bankDir+'STree.txt','r') as ftree, \
@@ -409,14 +437,14 @@ def get_data(granularity=5):
                 ids.append(getid(text))
             scores = list(map(getsent,ids))
             if granularity:
-                scores = array([max(ceil(x*granularity)-1,0) for x in scores], 'int8')  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
+                scores = array(list(map(granularise,scores)), 'int8')  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
             else:
                 scores = array(scores, 'float64')
             # Record data
             datapoint = [embids,
                          array(leftchildren, 'int8'),
                          array(rightchildren, 'int8'),
-                         scores]
+                         scores[-1] if root else scores]
             section = fsplit.readline().strip().split(',')[-1]
             if section == '1':
                 train.append(datapoint)
@@ -445,7 +473,7 @@ def max_ignore(a,b):
     else:
         return max(a,b)
 
-def get_dmrs_data(granularity=5, backoff=False):
+def get_dmrs_data(granularity=5, root=False, backoff=False):
     """
     Returns three lists of datapoints in the form:
     [embedding ids, child_ids, child_labels, sentiment scores]
@@ -455,7 +483,8 @@ def get_dmrs_data(granularity=5, backoff=False):
     
     train, test, dev = [], [], []
     if backoff:
-        orig_train, orig_test, orig_dev = get_data(granularity=granularity)
+        orig_train, orig_test, orig_dev = get_data(granularity=granularity, root=root)
+    if granularity: granularise = granular_fn(granularity)
     
     with open(bankDir+'SOStr.txt','r') as ftext, \
          open(bankDir+'STree.txt','r') as ftree, \
@@ -521,10 +550,10 @@ def get_dmrs_data(granularity=5, backoff=False):
                     tok_ids.append(getid(text))
                 tok_scores = list(map(getsent,tok_ids))
                 if granularity:
-                    tok_scores = [max(ceil(x*granularity)-1,0) for x in tok_scores]  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
+                    tok_scores = list(map(granularise,tok_scores))  # e.g. [0,0.2],(0.2,0.4],(0.4,0.6],etc.
                 span_to_score = {tok_spans[n]:score for n,score in enumerate(tok_scores)}
                 if granularity:
-                    span_to_score[-1,-1] = floor(granularity/2)
+                    span_to_score[-1,-1] = granularise(0.5)
                 else:
                     span_to_score[-1,-1] = 0.5
                 # Get spans for all subgraphs, and link information for nonterminals
@@ -554,31 +583,36 @@ def get_dmrs_data(granularity=5, backoff=False):
                     else:
                         nodeid_to_full_span[nid] = (start,end)
                         nodeid_to_index[nid] = nodeid_to_orig[nid]
-                scores = []
-                for start, end in spans:
-                    if (start, end) in span_to_score:
-                        scores.append(span_to_score[start,end])
-                    else:
-                        found = False
-                        k = 0
-                        while not found:
-                            k += 1
-                            # Try larger
-                            for i in range(k+1):
-                                new_start = start - k + i
-                                new_end = end + i
-                                if (new_start, new_end) in span_to_score:
-                                    found = True
-                                    break
-                            # Try smaller
-                            if not found and k <= (end-start):
+                # Find scores
+                if not root:
+                    scores = []
+                    for start, end in spans:
+                        if (start, end) in span_to_score:
+                            scores.append(span_to_score[start,end])
+                        else:
+                            found = False
+                            k = 0
+                            while not found:
+                                k += 1
+                                # Try larger
                                 for i in range(k+1):
-                                    new_start = start + i
-                                    new_end = end - k + i
+                                    new_start = start - k + i
+                                    new_end = end + i
                                     if (new_start, new_end) in span_to_score:
                                         found = True
                                         break
-                        scores.append(span_to_score[new_start,new_end])
+                                # Try smaller
+                                if not found and k <= (end-start):
+                                    for i in range(k+1):
+                                        new_start = start + i
+                                        new_end = end - k + i
+                                        if (new_start, new_end) in span_to_score:
+                                            found = True
+                                            break
+                            scores.append(span_to_score[new_start,new_end])
+                else:
+                    scores = phrasesent(' '.join(tokens))
+                    if granularity: scores = granularise(scores)
                 # Record data
                 datapoint = [array(predids),
                              array(child_indices),
