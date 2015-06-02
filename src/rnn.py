@@ -206,7 +206,7 @@ def classify_and_cost_fns(wSent,granular,neighbour):
 
 # Function to calculate the gradient
 
-def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=False):
+def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=False, use_sig=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -227,7 +227,10 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=
         second= prev[right]
         cat = T.concatenate((first,second))
         out = tdot(tdot(wQuad,first,(2,0)),second,(1,0)) + tdot(wLin,cat,(1,0)) #+ bias
-        rect = out * (out >= 0)
+        if use_sig:
+            rect = sigmoid(out) 
+        else:
+            rect = out * (out >= 0)
         new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
@@ -278,7 +281,7 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=
     return find_grad, find_error, predict
 
 
-def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False, root=False):
+def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False, root=False, use_sig=False):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -305,7 +308,10 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         mod = tdot(wQuad,v0,(1,0))
         out = tdot(wLin[0],v0,(1,0)) \
               + T.sum(tdot(wLin[1],v,(1,1)) + tdot(mod,v,(1,1)), 1)
-        rect = out * (out >= 0)
+        if use_sig:
+            rect = sigmoid(out)
+        else:
+            rect = out * (out >= 0)
         new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
@@ -352,7 +358,7 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
                                  outputs_info=None)
         
         direct_cost = cost(predembed, senti[0])
-        direct_class = classify(predembed).reshape(1,-1)
+        direct_class = classify(predembed)
     
     grads = T.grad(total, [wQuad,wLin,wSent,sentembed])
     pred_grad = T.grad(direct_cost, [wSent,predembed])
@@ -384,7 +390,7 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         if chi.shape[0] > 0:
             return predict(emb, chi)
         else:
-            return pred_predict(emb[0])
+            return array([pred_predict(emb[0])])
     
     return find_grad_safe, find_error_safe, predict_safe
 

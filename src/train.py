@@ -76,13 +76,15 @@ if __name__ == '__main__':
     parser.add_argument('--l1', type=float64, nargs=4, default=[0.2,0.5,1.,0.05])
     parser.add_argument('--l2', type=float64, nargs=4, default=[1.,1,2,1])
     parser.add_argument('-adareg', action='store_const', const=True, default=False)
-    parser.add_argument('--batch', type=int, default=0)
+    parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--init', type=float64, default=0.001)
     parser.add_argument('--gran', type=int, default=5)
     parser.add_argument('--neigh', type=float64, default=0.5)
     parser.add_argument('-freq', action='store_const', const=True, default=False)
     parser.add_argument('-root', action='store_const', const=True, default=False)
+    parser.add_argument('--print', type=int, default=100)
+    parser.add_argument('-sigmoid', action='store_const', const=True, default=False)
     arg = parser.parse_args()
     
     with open(arg.dir+'settings.txt','a') as f:
@@ -98,14 +100,12 @@ if __name__ == '__main__':
         train, test, dev = get_data(granularity=arg.gran, root=arg.root)
     n_items = len(train)
     
-    if arg.batch == 0:
-        arg.l1 = [x/n_items for x in arg.l1]
-        arg.l2 = [x/n_items for x in arg.l2]
-        arg.mom **= 1/n_items
-        arg.ada **= 1/n_items
-        arg.rate /= n_items
-    else:
-        raise NotImplementedError
+    n_batches = n_items/arg.batch
+    arg.l1 = [x/n_batches for x in arg.l1]
+    arg.l2 = [x/n_batches for x in arg.l2]
+    arg.mom **= 1/n_batches
+    arg.ada **= 1/n_batches
+    arg.rate /= n_batches
     
     reg_one = shared(array(arg.l1), name='reg1')
     reg_two = shared(array(arg.l2), name='reg2')
@@ -113,7 +113,7 @@ if __name__ == '__main__':
     reg2 = reg_two.get_value(borrow=True)
     
     if arg.dmrs:
-        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, granular=arg.gran, neighbour=arg.neigh, root=arg.root)
+        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, granular=arg.gran, neighbour=arg.neigh, root=arg.root, use_sig=arg.sigmoid)
         if arg.labs:
             raise NotImplementedError
         else:
@@ -127,7 +127,7 @@ if __name__ == '__main__':
             def classes(ids,chi,lab):
                 return lab_classes(ids,chi)
     else:
-        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, granular=arg.gran, neighbour=arg.neigh, root=arg.root)
+        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, granular=arg.gran, neighbour=arg.neigh, root=arg.root, use_sig=arg.sigmoid)
     
 
     
@@ -211,21 +211,26 @@ if __name__ == '__main__':
         return evaluate(embed.get_value(borrow=True), fn, data, RMSq=not(arg.gran), sum_all=not(arg.root))
 
     
-    print('Beginning training')
+    if arg.print: print('Beginning training')
     
-    print(accuracy())
+    if arg.print: print(accuracy())
     
     for i in range(arg.epoch):
         shuffle(train)
-        v = 1
-        for x in train:
-            # Find the gradient and descend
-            grad = gradient(*x)
+        for j in range(0, n_items, arg.batch):
+            # initialise gradient for this batch
+            grad = [zeros_like(p.get_value(borrow=True)) for p in params]
+            for x in train[j : j+arg.batch]:
+                # add the gradient from each datapoint
+                for n,g in enumerate(gradient(*x)):
+                    grad[n] += g
+            # update the parameters
             update(*grad)
-            # Print, periodically
-            if v==100: v=1; print(wSent.get_value(borrow=True))
-            else: v+=1
-        print("\nEpoch {} complete!\nPerformance on devset:\n\nsoft {}\nhard {}\n\n".format(i+1, accuracy(soft=True), accuracy(soft=False)))
+            # print, periodically
+            if arg.print and j % arg.print < arg.batch:
+                print(wSent.get_value(borrow=True))
+        
+        if arg.print: print("\nEpoch {} complete!\nPerformance on devset:\n\nsoft {}\nhard {}\n\n".format(i+1, accuracy(soft=True), accuracy(soft=False)))
         save()
     
 
@@ -233,30 +238,29 @@ if __name__ == '__main__':
 if False:
     from argparse import Namespace
     arg = Namespace()
-    arg.dir = '../data/model/{}.pk'
+    arg.dir = '../data/model/'
     arg.dmrs = True
     arg.labs = False
-    arg.dim = 25
     arg.adareg = True
+    arg.freq = True
+    arg.root = True
+    arg.sigmoid = False
+    arg.dim = 25
     arg.init = 0.001
     arg.gran = 5
     arg.neigh = 0.5
+    arg.rate = 1
+    arg.ada = 0.5
+    arg.mom = 0.1
+    arg.l1 = [1,1,1,1]
+    arg.l2 = [1,1,1,1]
+    arg.batch = False
+    arg.epoch = False
+    arg.filename = None
+    arg.aux = None
     
     import numpy
-    
-    print(*(numpy.max(x.get_value()) for x in params), sep='\n')
-    print(*(numpy.average(numpy.abs(x.get_value())) for x in params), sep='\n')
-    #print(numpy.min(numpy.average(numpy.abs(embed.get_value()),1)), sep='\n')
-    
     from rnn import predid
-    
-    size_list = sorted([(pred, numpy.average(numpy.abs(embed.get_value(True)[embid]))) for pred, embid in predid.items()], key=lambda x:x[1])
-    #print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[:20]))
-    print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[-20:]))
-    
-    len([x for x in embed.get_value() if numpy.all(x==0)])/len(embed.get_value())
-    len([x for x in embed.get_value() if numpy.all(x==0)])
-    print(*(len([y for y in x.get_value().flat if y==0])/len(x.get_value().flatten()) for x in params), sep='\n')
     
     v = T.dvector()
     from theano import function
@@ -279,7 +283,7 @@ if False:
         for w in n: print(word2sent(w))
     def testfile(name, data=dev, soft=False, items=(pos,neg)):
         arg.loadfile = arg.dir.format(name)
-        arg.loadauxfile = arg.dir.format(name+'-aux')
+        arg.auxloadfile = arg.dir.format(name+'-aux')
         load()
         if items: minitest(*items)
         print(accuracy(data, soft=soft))
@@ -290,6 +294,14 @@ if False:
         sentembed = array([embed.get_value(borrow=True)[i] for i in map(embof, tokens)])
         return classes(sentembed, leftch, rightch)
     
+    def eval_one(x):
+        embids, rest, gold = x[0], x[1:-1], x[-1]
+        sentembed = array([embed.get_value(borrow=True)[j] for j in embids])
+        prediction = classes(sentembed, *rest)
+        print(prediction)
+        print('hard:', prediction == gold)
+        print('soft:', 1-error(sentembed, *(rest+[gold])))
+    
     def ids(data):
         for x in data:
             for y in x[0]:
@@ -299,3 +311,16 @@ if False:
     dev_ids = set(ids(dev))
     len(test_ids-train_ids)/len(test_ids)
     len(dev_ids-train_ids)/len(dev_ids)
+    
+    print(*(numpy.max(x.get_value()) for x in params), sep='\n')
+    print(*(numpy.average(numpy.abs(x.get_value())) for x in params), sep='\n')
+    #print(numpy.min(numpy.average(numpy.abs(embed.get_value()),1)), sep='\n')
+    
+    size_list = sorted([(pred, numpy.average(numpy.abs(embed.get_value(True)[embid]))) for pred, embid in predid.items()], key=lambda x:x[1])
+    #print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[:20]))
+    print('\n'.join('{}\t\t{}'.format(x,y) for x,y in size_list[-20:]))
+    
+    len([x for x in embed.get_value() if numpy.all(x==0)])/len(embed.get_value())
+    len([x for x in embed.get_value() if numpy.all(x==0)])
+    print(*(len([y for y in x.get_value().flat if y==0])/len(x.get_value().flatten()) for x in params), sep='\n')
+    
