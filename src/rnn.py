@@ -206,7 +206,7 @@ def classify_and_cost_fns(wSent,granular,neighbour):
 
 # Function to calculate the gradient
 
-def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=False, use_sig=False):
+def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=False, nonlin='r'):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -227,10 +227,14 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=
         second= prev[right]
         cat = T.concatenate((first,second))
         out = tdot(tdot(wQuad,first,(2,0)),second,(1,0)) + tdot(wLin,cat,(1,0)) #+ bias
-        if use_sig:
+        if nonlin == 's':
             rect = sigmoid(out) 
-        else:
+        elif nonlin == 'r':
             rect = out * (out >= 0)
+        elif nonlin == 't':
+            rect = T.tanh(out)
+        else:
+            raise NotImplementedError
         new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     
@@ -281,7 +285,7 @@ def gradient_function(wQuad, wLin, wSent, granular=False, neighbour=False, root=
     return find_grad, find_error, predict
 
 
-def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False, root=False, use_sig=False):
+def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=False, labelled=False, root=False, nonlin='r'):
     """
     parameters:
     wQuad - 3rd order tensor for combining vectors
@@ -308,10 +312,14 @@ def gradient_dmrs(wQuad, wLin, wSent, max_children, granular=False, neighbour=Fa
         mod = tdot(wQuad,v0,(1,0))
         out = tdot(wLin[0],v0,(1,0)) \
               + T.sum(tdot(wLin[1],v,(1,1)) + tdot(mod,v,(1,1)), 1)
-        if use_sig:
+        if nonlin == 's':
             rect = sigmoid(out)
-        else:
+        elif nonlin == 'r':
             rect = out * (out >= 0)
+        elif nonlin == 't':
+            rect = T.tanh(out)
+        else:
+            raise NotImplementedError
         new = T.set_subtensor(prev[cur], rect)
         return [cur+1, new]
     

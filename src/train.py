@@ -84,7 +84,10 @@ if __name__ == '__main__':
     parser.add_argument('-freq', action='store_const', const=True, default=False)
     parser.add_argument('-root', action='store_const', const=True, default=False)
     parser.add_argument('--print', type=int, default=100)
-    parser.add_argument('-sigmoid', action='store_const', const=True, default=False)
+    nonlin = parser.add_mutually_exclusive_group()
+    nonlin.add_argument('-rect',   action='store_const', dest='nonlin', const='r', default='r')
+    nonlin.add_argument('-sigmoid',action='store_const', dest='nonlin', const='s')
+    nonlin.add_argument('-tanh',   action='store_const', dest='nonlin', const='t')
     arg = parser.parse_args()
     
     with open(arg.dir+'settings.txt','a') as f:
@@ -113,7 +116,7 @@ if __name__ == '__main__':
     reg2 = reg_two.get_value(borrow=True)
     
     if arg.dmrs:
-        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, granular=arg.gran, neighbour=arg.neigh, root=arg.root, use_sig=arg.sigmoid)
+        token_gradient, error, classes = gradient_dmrs(wQuad, wLin, wSent, maxlink+1, granular=arg.gran, neighbour=arg.neigh, root=arg.root, nonlin=arg.nonlin)
         if arg.labs:
             raise NotImplementedError
         else:
@@ -127,7 +130,7 @@ if __name__ == '__main__':
             def classes(ids,chi,lab):
                 return lab_classes(ids,chi)
     else:
-        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, granular=arg.gran, neighbour=arg.neigh, root=arg.root, use_sig=arg.sigmoid)
+        token_gradient, error, classes = gradient_function(wQuad, wLin, wSent, granular=arg.gran, neighbour=arg.neigh, root=arg.root, nonlin=arg.nonlin)
     
 
     
@@ -189,7 +192,7 @@ if __name__ == '__main__':
     
     if arg.load: load()
     
-    def accuracy(data=dev, soft=False):
+    def accuracy(data=dev, soft=False, error=error, classes=classes):
         if not arg.gran: soft=True
         if soft:
             fn = error
@@ -244,7 +247,7 @@ if False:
     arg.adareg = True
     arg.freq = True
     arg.root = True
-    arg.sigmoid = False
+    arg.nonlin = 'r'
     arg.dim = 25
     arg.init = 0.001
     arg.gran = 5
@@ -254,10 +257,11 @@ if False:
     arg.mom = 0.1
     arg.l1 = [1,1,1,1]
     arg.l2 = [1,1,1,1]
-    arg.batch = False
+    arg.batch = 1
     arg.epoch = False
-    arg.filename = None
-    arg.aux = None
+    arg.filename = ''
+    arg.aux = ''
+    arg.load = ''
     
     import numpy
     from rnn import predid
@@ -281,12 +285,12 @@ if False:
         for w in p: print(word2sent(w))
         print('-')
         for w in n: print(word2sent(w))
-    def testfile(name, data=dev, soft=False, items=(pos,neg)):
+    def testfile(name, data=dev, soft=False, items=(pos,neg), error=error, classes=classes):
         arg.loadfile = arg.dir.format(name)
         arg.auxloadfile = arg.dir.format(name+'-aux')
         load()
         if items: minitest(*items)
-        print(accuracy(data, soft=soft))
+        print(accuracy(data, soft=soft, error=error, classes=classes))
     
     def embof(text):
         return getembid(getid(text))
@@ -294,13 +298,23 @@ if False:
         sentembed = array([embed.get_value(borrow=True)[i] for i in map(embof, tokens)])
         return classes(sentembed, leftch, rightch)
     
-    def eval_one(x):
+    def class_one(x, classes=classes):
+        embids, rest = x[0], x[1:-1]
+        sentembed = array([embed.get_value(borrow=True)[j] for j in embids])
+        return classes(sentembed, *rest)
+    
+    def eval_one(x, error=error, classes=classes):
         embids, rest, gold = x[0], x[1:-1], x[-1]
         sentembed = array([embed.get_value(borrow=True)[j] for j in embids])
         prediction = classes(sentembed, *rest)
         print(prediction)
         print('hard:', prediction == gold)
         print('soft:', 1-error(sentembed, *(rest+[gold])))
+    
+    datapoint = [array(list(map(getpredid,['neg_rel','good_a_at-for-of_rel']))),
+                 array([[0,1,1,1,1,1,1,1,1]]),
+                 None,
+                 array(1)]
     
     def ids(data):
         for x in data:
@@ -324,3 +338,13 @@ if False:
     len([x for x in embed.get_value() if numpy.all(x==0)])
     print(*(len([y for y in x.get_value().flat if y==0])/len(x.get_value().flatten()) for x in params), sep='\n')
     
+    from collections import Counter
+    def histo(class_one=class_one):
+        return Counter((int(x[-1]), int(class_one(x))) for x in dev)
+    
+    for file in [x[:-3] for x in os.listdir('../data/model') if x[-3:] == '.pk' and x[-6:-3] != 'aux']:
+        print(file, end=': ')
+        try:
+            testfile(file, items=None, soft=False, data=test) # classes=tanh_class, error=tanh_err)
+        except (TypeError, ValueError):
+            print('-')

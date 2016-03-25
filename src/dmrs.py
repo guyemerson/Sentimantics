@@ -224,7 +224,7 @@ if __name__ == "__main__":
             
             ### Deal with extra roots ###
             
-            # Remove coordination if they're ending up as roots
+            # Remove coordination if they're ending up as roots (coordinated modifiers in particular)
             if not graph.rooted():
                 if [x for x in graph.roots() if coord(x.lemma)]:
                     for node in reversed(list(graph)):
